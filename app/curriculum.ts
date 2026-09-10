@@ -41,7 +41,7 @@ export const units: Unit[] = [
     titleFil: 'Kumusta ka?',
     description: 'Say hello, be polite, and keep a conversation going.',
     canDo: 'I can greet someone and ask them to repeat something.',
-    minutes: 6,
+    minutes: 10,
     soundFocus:
       'Keep each vowel clear and stress the last syllable in ku-mus-TA. Within a word, “ng” is the single sound heard in “singer” and can begin a Tagalog word. The standalone marker “ng,” as in “Gusto ko ng kape,” is pronounced “nang.”',
     pattern: {
@@ -118,7 +118,7 @@ export const units: Unit[] = [
     titleFil: 'Ako si…',
     description: 'Share your name, where you are from, and where you live.',
     canDo: 'I can introduce myself and ask basic personal questions.',
-    minutes: 7,
+    minutes: 11,
     soundFocus:
       'Keep the final vowels audible in ako, kayo, and ninyo. Tap the “r” once in trabaho.',
     pattern: {
@@ -132,14 +132,14 @@ export const units: Unit[] = [
         fil: 'Ako si Ana.',
         en: 'I’m Ana.',
         register: 'neutral',
-        note: 'Use “si” before a person’s name.',
+        note: 'In the frame “Ako si + name,” use “si” before one person’s name.',
       },
       {
         id: 'pangalan-mo',
         fil: 'Anong pangalan mo?',
         en: 'What’s your name?',
         register: 'casual',
-        note: '“Ano ang” commonly contracts to “anong” before a noun in conversation.',
+        note: '“Anong” is “ano” plus the linker “-ng” before a noun; compare the full question “Ano ang pangalan mo?”',
       },
       {
         id: 'pangalan-ninyo',
@@ -153,7 +153,7 @@ export const units: Unit[] = [
         fil: 'Taga-saan ka?',
         en: 'Where are you from?',
         register: 'neutral',
-        note: '“Taga-” asks about someone’s place of origin or home area.',
+        note: '“Taga-” identifies someone’s place of origin or home area; with “saan,” it asks where someone is from.',
       },
       {
         id: 'taga-california',
@@ -167,7 +167,7 @@ export const units: Unit[] = [
         fil: 'Nakatira ako sa Los Angeles.',
         en: 'I live in Los Angeles.',
         register: 'neutral',
-        note: 'Use “sa” before a place.',
+        note: 'After “nakatira,” use “sa” to introduce the place where someone lives.',
       },
       {
         id: 'trabaho',
@@ -193,9 +193,9 @@ export const units: Unit[] = [
     description: 'Express wants and needs, then ask simple questions.',
     canDo:
       'I can say what I want or need and ask whether something is available.',
-    minutes: 7,
+    minutes: 11,
     soundFocus:
-      'Say kailangan by syllable first: ka-i-la-ngan. Then connect the syllables at a natural speed.',
+      'Say kailangan by syllable first: ka-ʔi-la-ngan. Then connect the syllables at a natural speed.',
     pattern: {
       frame: 'Kailangan ko ng [thing].',
       transform: 'tubig → tulong',
@@ -212,7 +212,7 @@ export const units: Unit[] = [
       {
         id: 'ayoko-maanghang',
         fil: 'Ayoko ng maanghang.',
-        en: 'I don’t want or like spicy food.',
+        en: 'I don’t want anything spicy. / I don’t like spicy food.',
         register: 'neutral',
         note: 'Depending on context, “ayoko” can mean either “I don’t want” or “I don’t like.”',
       },
@@ -274,7 +274,7 @@ export const units: Unit[] = [
     titleFil: 'Isang adobo po.',
     description: 'Order food, make a request, and pay with confidence.',
     canDo: 'I can order a simple meal and ask for the total.',
-    minutes: 8,
+    minutes: 12,
     soundFocus:
       'Keep every vowel distinct in ma-sa-rap and pa-ki-ba-lot; do not reduce unstressed vowels to an English “uh.”',
     pattern: {
@@ -349,9 +349,9 @@ export const units: Unit[] = [
     titleFil: 'Nasaan po ang…?',
     description: 'Find a place, follow directions, and stop a jeepney.',
     canDo: 'I can ask where something is and understand simple directions.',
-    minutes: 8,
+    minutes: 12,
     soundFocus:
-      'Tap the “r” once in diretso, and pronounce each syllable in ku-ma-nan and ku-ma-li-wa before speeding up.',
+      'Tap the “r” once in diretso, and pronounce each syllable in ku-MA-nan and ku-ma-li-WAʔ before speeding up.',
     pattern: {
       frame: '[direction verb] sa [place].',
       transform: 'Kumaliwa → Kumanan',
@@ -424,7 +424,7 @@ export const units: Unit[] = [
     titleFil: 'Araw-araw',
     description: 'Talk about family, home, work, and your routine.',
     canDo: 'I can describe a few people and actions in my daily routine.',
-    minutes: 8,
+    minutes: 12,
     soundFocus:
       'Break long verbs into syllables before natural-speed practice: gu-mi-gi-sing, nag-ta-tra-ba-ho, u-mu-u-wi.',
     pattern: {
@@ -459,7 +459,7 @@ export const units: Unit[] = [
         fil: 'Kumakain ako ng almusal.',
         en: 'I eat breakfast.',
         register: 'neutral',
-        note: 'The repeated syllable in “kumakain” signals an ongoing or habitual action.',
+        note: 'The repeated syllable in “kumakain” helps mark an ongoing or habitual action.',
       },
       {
         id: 'nagtatrabaho',
@@ -498,7 +498,7 @@ export const units: Unit[] = [
     titleFil: 'Tara!',
     description: 'Invite someone, make plans, accept, or decline kindly.',
     canDo: 'I can make a simple plan and respond to an invitation.',
-    minutes: 7,
+    minutes: 11,
     soundFocus:
       'Say “Gusto mo bang kumain?” as one continuous phrase. End “bang” with the single “ng” sound heard in “singer”; do not add a separate “g” sound.',
     pattern: {
@@ -578,7 +578,7 @@ export const units: Unit[] = [
     titleFil: 'Kailangan ko ng tulong.',
     description: 'Ask for urgent help and explain a basic problem.',
     canDo: 'I can ask for help and describe a basic health or safety need.',
-    minutes: 7,
+    minutes: 11,
     soundFocus:
       'Keep every syllable audible in dok-tor, os-pi-tal, and na-li-li-gaw so these key words stay easy to understand.',
     pattern: {

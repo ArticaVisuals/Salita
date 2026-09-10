@@ -1,4 +1,9 @@
-export type SkillMode = 'listening' | 'reading' | 'speaking';
+export type SkillMode =
+  | 'listening'
+  | 'reading'
+  | 'speaking'
+  | 'grammar'
+  | 'pronunciation';
 export type AttemptOutcome = 'first-correct' | 'retry-correct' | 'wrong';
 
 export type ReviewRecord = {

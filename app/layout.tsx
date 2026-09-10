@@ -13,10 +13,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://salita-daily-tagalog.hello925837.chatgpt.site'),
+  metadataBase: new URL(
+    'https://salita-daily-tagalog.hello925837.chatgpt.site',
+  ),
   title: 'Salita — Learn Tagalog every day',
   description:
-    'Short, practical Tagalog lessons for speaking, listening, reading, and real conversation.',
+    'Daily Tagalog lessons in pronunciation, grammar, listening, reading, speaking, and real conversation.',
   icons: { icon: '/favicon.svg' },
   manifest: '/manifest.webmanifest',
   appleWebApp: {

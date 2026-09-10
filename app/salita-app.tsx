@@ -43,6 +43,7 @@ import {
   type Unit,
   units,
 } from './curriculum';
+import { getFoundation, type FoundationExample } from './foundations';
 import {
   STORAGE_KEY,
   addCalendarDays,
@@ -58,9 +59,13 @@ import {
   type LearnerProgress,
   type SkillMode,
 } from '@/lib/progress';
+import { segmentTagalogText } from '@/lib/tagalog-speech';
 
 type View = 'today' | 'learn' | 'review' | 'progress';
 type ExerciseKind =
+  | 'pronunciation'
+  | 'grammar'
+  | 'passage'
   | 'listening'
   | 'reading'
   | 'pattern'
@@ -87,6 +92,13 @@ type Exercise = {
   patternFrame?: string;
   patternTransform?: string;
   soundFocus?: string;
+  lessonTitle?: string;
+  lessonText?: string;
+  formula?: string;
+  examples?: FoundationExample[];
+  syllables?: string;
+  coach?: string;
+  translation?: string;
   isRetry?: boolean;
 };
 
@@ -242,8 +254,76 @@ function dialogueExercise(unit: Unit): Exercise {
   };
 }
 
+function foundationExercise(
+  unit: Unit,
+  kind: 'pronunciation' | 'grammar',
+): Exercise {
+  const foundation = getFoundation(unit.id);
+  const pronunciation = foundation.pronunciation;
+  const grammar = foundation.grammar;
+  const lesson = kind === 'pronunciation' ? pronunciation : grammar;
+  const drill = lesson.drill;
+  const examples = kind === 'grammar' ? grammar.examples : undefined;
+  const model =
+    kind === 'pronunciation' ? pronunciation.model : (examples?.[0]?.fil ?? '');
+
+  return {
+    instanceId: `${unit.id}-foundation-${kind}`,
+    baseId: `${unit.id}-foundation-${kind}`,
+    kind,
+    skill: kind,
+    eyebrow: kind === 'pronunciation' ? 'Sound lab' : 'Grammar workshop',
+    prompt: drill.question,
+    tagalog: model,
+    english: '',
+    correct: drill.correct,
+    options: rotateOptions(
+      drill.correct,
+      drill.options.filter((option) => option !== drill.correct),
+      unit.number + (kind === 'grammar' ? 1 : 0),
+    ),
+    accepted: [drill.correct],
+    note: drill.note,
+    register: 'neutral',
+    lessonTitle: lesson.title,
+    lessonText: lesson.explanation,
+    formula: kind === 'grammar' ? grammar.formula : undefined,
+    examples,
+    syllables: kind === 'pronunciation' ? pronunciation.syllables : undefined,
+    coach: kind === 'pronunciation' ? pronunciation.coach : undefined,
+  };
+}
+
+function passageExercise(unit: Unit): Exercise {
+  const reading = getFoundation(unit.id).reading;
+  return {
+    instanceId: `${unit.id}-foundation-reading`,
+    baseId: `${unit.id}-foundation-reading`,
+    kind: 'passage',
+    skill: 'reading',
+    eyebrow: 'Mini reading',
+    prompt: reading.drill.question,
+    tagalog: reading.passage,
+    english: '',
+    correct: reading.drill.correct,
+    options: rotateOptions(
+      reading.drill.correct,
+      reading.drill.options.filter(
+        (option) => option !== reading.drill.correct,
+      ),
+      unit.number + 2,
+    ),
+    accepted: [reading.drill.correct],
+    note: reading.drill.note,
+    register: 'neutral',
+    lessonTitle: reading.title,
+    translation: reading.translation,
+  };
+}
+
 function buildLesson(unit: Unit): Exercise[] {
   return [
+    foundationExercise(unit, 'pronunciation'),
     phraseExercise(
       unit,
       0,
@@ -260,11 +340,12 @@ function buildLesson(unit: Unit): Exercise[] {
       'Read',
       'Choose the best meaning.',
     ),
+    foundationExercise(unit, 'grammar'),
     phraseExercise(
       unit,
       2,
       'pattern',
-      'reading',
+      'grammar',
       'Pattern swap',
       'Notice the frame, then choose the Tagalog expression.',
     ),
@@ -301,6 +382,7 @@ function buildLesson(unit: Unit): Exercise[] {
       'Listen, then say the phrase aloud.',
     ),
     dialogueExercise(unit),
+    passageExercise(unit),
   ];
 }
 
@@ -320,6 +402,39 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
       const separator = key.lastIndexOf(':');
       const baseId = key.slice(0, separator);
       const skill = key.slice(separator + 1) as SkillMode;
+
+      if (baseId === `${unit.id}-foundation-pronunciation`) {
+        const exercise = foundationExercise(unit, 'pronunciation');
+        return [
+          {
+            ...exercise,
+            instanceId: `${exercise.instanceId}-review`,
+            eyebrow: 'Due sound review',
+          },
+        ];
+      }
+
+      if (baseId === `${unit.id}-foundation-grammar`) {
+        const exercise = foundationExercise(unit, 'grammar');
+        return [
+          {
+            ...exercise,
+            instanceId: `${exercise.instanceId}-review`,
+            eyebrow: 'Due grammar review',
+          },
+        ];
+      }
+
+      if (baseId === `${unit.id}-foundation-reading`) {
+        const exercise = passageExercise(unit);
+        return [
+          {
+            ...exercise,
+            instanceId: `${exercise.instanceId}-review`,
+            eyebrow: 'Due reading review',
+          },
+        ];
+      }
 
       if (baseId === `${unit.id}-dialogue`) {
         const exercise = dialogueExercise(unit);
@@ -356,14 +471,23 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
                 'Due speaking review',
                 'Listen, then say the phrase aloud.',
               )
-            : phraseExercise(
-                unit,
-                phraseIndex,
-                'reading',
-                'reading',
-                'Due reading review',
-                'Read, then choose the best meaning.',
-              );
+            : skill === 'grammar'
+              ? phraseExercise(
+                  unit,
+                  phraseIndex,
+                  'pattern',
+                  'grammar',
+                  'Due pattern review',
+                  'Use the sentence frame, then choose the natural expression.',
+                )
+              : phraseExercise(
+                  unit,
+                  phraseIndex,
+                  'reading',
+                  'reading',
+                  'Due reading review',
+                  'Read, then choose the best meaning.',
+                );
       return [{ ...exercise, instanceId: `${exercise.instanceId}-review` }];
     });
 }
@@ -395,6 +519,30 @@ function findReviewTarget(
   const phrase = findPhrase(baseId);
   if (phrase)
     return { fil: phrase.phrase.fil, en: phrase.phrase.en, unit: phrase.unit };
+  for (const unit of units) {
+    const foundation = getFoundation(unit.id);
+    if (baseId === `${unit.id}-foundation-pronunciation`) {
+      return {
+        fil: foundation.pronunciation.model,
+        en: foundation.pronunciation.title,
+        unit,
+      };
+    }
+    if (baseId === `${unit.id}-foundation-grammar`) {
+      return {
+        fil: foundation.grammar.examples[0]?.fil ?? foundation.grammar.formula,
+        en: foundation.grammar.title,
+        unit,
+      };
+    }
+    if (baseId === `${unit.id}-foundation-reading`) {
+      return {
+        fil: foundation.reading.passage,
+        en: foundation.reading.title,
+        unit,
+      };
+    }
+  }
   const unit = units.find((item) => baseId === `${item.id}-dialogue`);
   if (!unit) return undefined;
   return { fil: unit.dialogue.line, en: unit.dialogue.situation, unit };
@@ -521,6 +669,8 @@ export default function SalitaApp() {
               listeningStrength: skillStrength(progress, 'listening'),
               readingStrength: skillStrength(progress, 'reading'),
               speakingStrength: skillStrength(progress, 'speaking'),
+              grammarStrength: skillStrength(progress, 'grammar'),
+              pronunciationStrength: skillStrength(progress, 'pronunciation'),
             };
           },
         },
@@ -796,8 +946,8 @@ function TodayView({
               Magandang araw!
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
-              Build useful Tagalog (Filipino) through one real conversation at a
-              time.
+              Build useful Tagalog (Filipino) from sounds and sentence structure
+              to real conversation.
             </p>
           </div>
           <span className="hidden rounded-[5px] bg-[var(--f-green-1)] px-3 py-2 text-xs font-black text-[var(--f-green-4)] sm:inline-flex">
@@ -829,6 +979,9 @@ function TodayView({
             <p className="mt-3 max-w-md text-base leading-6 text-[#10066c]">
               {unit.description}
             </p>
+            <p className="mt-3 text-xs font-black uppercase tracking-[0.09em]">
+              Sound · Grammar · Reading · Conversation
+            </p>
             <div className="mt-6 flex flex-wrap items-center gap-4">
               <Button
                 size="lg"
@@ -840,7 +993,7 @@ function TodayView({
               </Button>
               <div className="flex items-center gap-2 text-sm font-black">
                 <Star className="size-4 fill-[var(--f-yellow-3)] text-[#5c4a00]" />{' '}
-                up to 80 XP
+                up to 110 XP
               </div>
             </div>
           </div>
@@ -948,6 +1101,7 @@ function TodayView({
               : 'Finish one lesson today to begin your streak.'}
           </p>
         </section>
+        <VoiceConnectionCard />
         <section className="rounded-[16px] border border-border bg-card p-5">
           <div className="flex items-start gap-3">
             <span className="grid size-10 shrink-0 place-items-center rounded-[8px] bg-[var(--f-blue-3)] text-[#183f7b]">
@@ -964,6 +1118,74 @@ function TodayView({
         </section>
       </aside>
     </div>
+  );
+}
+
+function VoiceConnectionCard() {
+  const [voice, setVoice] = useState<{
+    configured: boolean;
+    voice: string | null;
+  } | null>(null);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetch('/api/speech', {
+      headers: { Accept: 'application/json' },
+      signal: controller.signal,
+    })
+      .then((response) => response.json())
+      .then((value: unknown) => {
+        if (!value || typeof value !== 'object' || !('configured' in value)) {
+          return;
+        }
+        const result = value as { configured: unknown; voice?: unknown };
+        setVoice({
+          configured: result.configured === true,
+          voice: typeof result.voice === 'string' ? result.voice : null,
+        });
+      })
+      .catch(() => {
+        // Audio playback provides its own actionable fallback if status is unavailable.
+      });
+    return () => controller.abort();
+  }, []);
+
+  const connected = voice?.configured === true;
+  return (
+    <section className="rounded-[16px] border border-border bg-card p-5">
+      <div className="flex items-start gap-3">
+        <span
+          className={`grid size-10 shrink-0 place-items-center rounded-[8px] ${connected ? 'bg-[var(--f-green-1)] text-[var(--f-green-4)]' : 'bg-[var(--f-blue-3)] text-[#183f7b]'}`}
+        >
+          <Volume2 className="size-5" />
+        </span>
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="font-black">Filipino voice</p>
+            <Tag
+              className={
+                voice === null
+                  ? 'bg-muted text-muted-foreground'
+                  : connected
+                    ? 'bg-[var(--f-green-1)] text-[var(--f-green-4)]'
+                    : 'bg-[var(--f-yellow-1)] text-[#6a5000]'
+              }
+            >
+              {voice === null
+                ? 'Checking'
+                : connected
+                  ? 'Azure connected'
+                  : 'Setup needed'}
+            </Tag>
+          </div>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            {connected
+              ? `${voice.voice?.replace('fil-PH-', '').replace('Neural', '') ?? 'Filipino'} neural voice · tap any underlined Tagalog word.`
+              : 'Azure Speech support is built in. Until credentials are connected, Salita uses only a correctly matched Filipino device voice.'}
+          </p>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -1090,7 +1312,8 @@ function LearnView({
           </h1>
           <p className="mt-4 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
             Eight practical units build from greetings to everyday plans and
-            urgent help. Every lesson mixes listening, reading, and speaking.
+            urgent help. Every lesson mixes pronunciation, grammar, listening,
+            graded reading, and speaking.
           </p>
         </div>
         <Image
@@ -1112,7 +1335,7 @@ function LearnView({
               How Salita teaches
             </p>
             <h2 id="salita-method" className="mt-1 text-xl font-black">
-              Hear it, transform it, use it.
+              Hear it, notice it, transform it, use it.
             </h2>
           </div>
           <a
@@ -1147,7 +1370,7 @@ function LearnView({
             {
               icon: RefreshCcw,
               title: 'Return and create',
-              body: 'Missed phrases return soon; stronger ones come back after longer intervals.',
+              body: 'Phrases, grammar, and sound contrasts return on separate schedules as they grow stronger.',
               style: 'bg-[var(--f-green-1)] text-[var(--f-green-4)]',
             },
           ].map(({ icon: Icon, title, body, style }) => (
@@ -1165,9 +1388,9 @@ function LearnView({
           ))}
         </div>
         <p className="mt-4 text-xs leading-5 text-muted-foreground">
-          Adapted from the textbook’s pronunciation, substitution-drill,
-          situational-response, and cumulative-review sequence for shorter
-          contemporary daily sessions.
+          Adapted from the textbook’s sound-first practice, controlled
+          substitution, situational response, paragraph work, and cumulative
+          review for shorter contemporary daily sessions.
         </p>
       </section>
 
@@ -1302,8 +1525,9 @@ function ReviewView({
           Balikan ang mahalaga.
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-          Reading, listening, and speaking are scheduled separately. A phrase
-          you can recognize is not automatically marked strong in conversation.
+          Pronunciation, grammar, reading, listening, and speaking are scheduled
+          separately. Recognizing a phrase does not automatically mark every
+          language skill strong.
         </p>
       </div>
 
@@ -1348,7 +1572,11 @@ function ReviewView({
                   ? Headphones
                   : mode === 'speaking'
                     ? Mic
-                    : BookOpen;
+                    : mode === 'grammar'
+                      ? Languages
+                      : mode === 'pronunciation'
+                        ? Volume2
+                        : BookOpen;
               return (
                 <button
                   key={item.key}
@@ -1519,7 +1747,7 @@ function ProgressView({
           <p className="text-xs font-black uppercase tracking-[0.12em] text-muted-foreground">
             Skill strength
           </p>
-          <h2 className="mt-1 text-xl font-black">Three distinct abilities</h2>
+          <h2 className="mt-1 text-xl font-black">Five distinct abilities</h2>
           <div className="mt-6 space-y-5">
             {(
               [
@@ -1531,6 +1759,13 @@ function ProgressView({
                   'bg-[var(--f-success-strong)]',
                 ],
                 ['Speaking', 'speaking', Mic, 'bg-primary'],
+                ['Grammar', 'grammar', Languages, 'bg-[var(--f-yellow-4)]'],
+                [
+                  'Sound & stress',
+                  'pronunciation',
+                  Volume2,
+                  'bg-[var(--f-blue-4)]',
+                ],
               ] as const
             ).map(([label, mode, Icon, fill]) => {
               const strength = skillStrength(progress, mode);
@@ -1539,7 +1774,11 @@ function ProgressView({
                   ? '[&_[data-slot=progress-indicator]]:bg-[var(--f-cyan-4)]'
                   : fill === 'bg-[var(--f-success-strong)]'
                     ? '[&_[data-slot=progress-indicator]]:bg-[var(--f-success-strong)]'
-                    : '[&_[data-slot=progress-indicator]]:bg-primary';
+                    : fill === 'bg-[var(--f-yellow-4)]'
+                      ? '[&_[data-slot=progress-indicator]]:bg-[var(--f-yellow-4)]'
+                      : fill === 'bg-[var(--f-blue-4)]'
+                        ? '[&_[data-slot=progress-indicator]]:bg-[var(--f-blue-4)]'
+                        : '[&_[data-slot=progress-indicator]]:bg-primary';
               return (
                 <div key={mode}>
                   <div className="mb-2 flex items-center justify-between text-sm">
@@ -1559,6 +1798,11 @@ function ProgressView({
               );
             })}
           </div>
+          <p className="mt-5 text-[11px] leading-5 text-muted-foreground">
+            Sound strength reflects listening and form checks.
+            Record-and-compare practice is private and is not presented as an
+            automated accent score.
+          </p>
           <div className="mt-6 grid grid-cols-2 gap-3 border-t border-border pt-5">
             <div>
               <p className="text-2xl font-black">{introduced}</p>
@@ -1660,17 +1904,23 @@ function LessonExperience({
   const [voiceStatus, setVoiceStatus] = useState('');
   const [heard, setHeard] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
-  const [hintUsed, setHintUsed] = useState(false);
+  const hintUsedRef = useRef(false);
   const [recording, setRecording] = useState(false);
   const [recordedUrl, setRecordedUrl] = useState('');
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const modelAudioRef = useRef<HTMLAudioElement | null>(null);
+  const speechRequestRef = useRef<AbortController | null>(null);
+  const audioCacheRef = useRef<Map<string, string>>(new Map());
+  const cloudVoiceUnavailableRef = useRef(false);
+  const playbackIdRef = useRef(0);
   const startedAtRef = useRef(0);
   const exercise = queue[index];
   const totalNewPrompts = initialExercises.length;
 
   useEffect(() => {
     startedAtRef.current = Date.now();
+    const audioCache = audioCacheRef.current;
     return () => {
       const recorder = recorderRef.current;
       if (recorder) {
@@ -1686,6 +1936,12 @@ function LessonExperience({
         }
       }
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      speechRequestRef.current?.abort();
+      modelAudioRef.current?.pause();
+      for (const url of audioCache.values()) {
+        URL.revokeObjectURL(url);
+      }
+      audioCache.clear();
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -1704,10 +1960,16 @@ function LessonExperience({
     setVoiceStatus('');
     setHeard('');
     setShowTranscript(false);
-    setHintUsed(false);
+    hintUsedRef.current = false;
     if (recordedUrl) URL.revokeObjectURL(recordedUrl);
     setRecordedUrl('');
     setRecording(false);
+    playbackIdRef.current += 1;
+    speechRequestRef.current?.abort();
+    speechRequestRef.current = null;
+    modelAudioRef.current?.pause();
+    modelAudioRef.current = null;
+    window.speechSynthesis?.cancel();
     const recorder = recorderRef.current;
     if (recorder) {
       recorder.ondataavailable = null;
@@ -1743,22 +2005,18 @@ function LessonExperience({
     .join(' ');
 
   const toggleHint = () => {
-    setHintUsed(true);
+    hintUsedRef.current = true;
     setShowTranscript((value) => !value);
   };
 
   const revealTranscriptWithSupport = () => {
-    setHintUsed(true);
+    hintUsedRef.current = true;
     setShowTranscript(true);
   };
 
-  const playPhrase = (text: string, slow = false) => {
+  const playDeviceVoice = (text: string, slow: boolean) => {
     if (!('speechSynthesis' in window)) {
-      setVoiceStatus(
-        'Device voice is unavailable. Use the transcript instead.',
-      );
-      revealTranscriptWithSupport();
-      return;
+      return false;
     }
     window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
@@ -1766,13 +2024,7 @@ function LessonExperience({
     const filipinoVoice =
       voices.find((voice) => /^fil(-|_)/i.test(voice.lang)) ??
       voices.find((voice) => /^tl(-|_)/i.test(voice.lang));
-    if (!filipinoVoice) {
-      setVoiceStatus(
-        'No Filipino device voice is installed. Use the transcript; Salita will not substitute a mismatched voice.',
-      );
-      revealTranscriptWithSupport();
-      return;
-    }
+    if (!filipinoVoice) return false;
     utterance.voice = filipinoVoice;
     utterance.lang = filipinoVoice.lang;
     utterance.rate = slow ? 0.68 : 0.86;
@@ -1783,12 +2035,124 @@ function LessonExperience({
         'Ready to replay. Device voice is a practice aid, not a pronunciation score.',
       );
     utterance.onerror = () => {
-      setVoiceStatus(
-        'Device voice could not play. The transcript is available.',
-      );
-      revealTranscriptWithSupport();
+      setVoiceStatus('The device voice could not play. Please try again.');
     };
     window.speechSynthesis.speak(utterance);
+    return true;
+  };
+
+  const playPhrase = async (text: string, slow = false) => {
+    const playbackId = playbackIdRef.current + 1;
+    playbackIdRef.current = playbackId;
+    speechRequestRef.current?.abort();
+    modelAudioRef.current?.pause();
+    window.speechSynthesis?.cancel();
+
+    const revealIfNeeded = () => {
+      if (exercise.kind === 'listening' && !showTranscript) {
+        revealTranscriptWithSupport();
+      }
+    };
+    const fallBackToDeviceVoice = () => {
+      if (playDeviceVoice(text, slow)) return;
+      setVoiceStatus(
+        cloudVoiceUnavailableRef.current
+          ? 'Filipino audio needs its Azure connection. The transcript is available for now.'
+          : 'Filipino audio is temporarily unavailable. Please try again.',
+      );
+      revealIfNeeded();
+    };
+    const cacheKey = `${slow ? 'slow' : 'normal'}:${text}`;
+    const playAudioUrl = async (url: string) => {
+      if (playbackId !== playbackIdRef.current) return;
+      const audio = new Audio(url);
+      modelAudioRef.current = audio;
+      audio.onplay = () => {
+        if (playbackId === playbackIdRef.current) {
+          setVoiceStatus(
+            slow
+              ? 'Playing the Filipino neural voice slowly…'
+              : 'Playing the Filipino neural voice…',
+          );
+        }
+      };
+      audio.onended = () => {
+        if (playbackId === playbackIdRef.current) {
+          setVoiceStatus(
+            'Ready to replay. Tap any underlined Tagalog word to hear it.',
+          );
+        }
+      };
+      audio.onerror = () => {
+        if (playbackId === playbackIdRef.current) fallBackToDeviceVoice();
+      };
+      try {
+        await audio.play();
+      } catch {
+        if (playbackId === playbackIdRef.current) {
+          setVoiceStatus(
+            'Audio is ready. Tap the word or phrase once more to play it.',
+          );
+        }
+      }
+    };
+
+    const cachedUrl = audioCacheRef.current.get(cacheKey);
+    if (cachedUrl) {
+      await playAudioUrl(cachedUrl);
+      return;
+    }
+
+    if (cloudVoiceUnavailableRef.current) {
+      fallBackToDeviceVoice();
+      return;
+    }
+
+    const controller = new AbortController();
+    speechRequestRef.current = controller;
+    setVoiceStatus('Loading the Filipino neural voice…');
+
+    try {
+      const query = new URLSearchParams({
+        text,
+        speed: slow ? 'slow' : 'normal',
+      });
+      const response = await fetch(`/api/speech?${query}`, {
+        headers: { Accept: 'audio/mpeg' },
+        signal: controller.signal,
+      });
+
+      if (!response.ok) {
+        const problem = (await response.json().catch(() => null)) as {
+          code?: string;
+        } | null;
+        if (problem?.code === 'VOICE_NOT_CONFIGURED') {
+          cloudVoiceUnavailableRef.current = true;
+        }
+        if (playbackId === playbackIdRef.current) fallBackToDeviceVoice();
+        return;
+      }
+
+      const audioBlob = await response.blob();
+      if (!audioBlob.type.startsWith('audio/')) {
+        if (playbackId === playbackIdRef.current) fallBackToDeviceVoice();
+        return;
+      }
+      const audioUrl = URL.createObjectURL(audioBlob);
+      audioCacheRef.current.set(cacheKey, audioUrl);
+      await playAudioUrl(audioUrl);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      if (playbackId === playbackIdRef.current) fallBackToDeviceVoice();
+    } finally {
+      if (speechRequestRef.current === controller) {
+        speechRequestRef.current = null;
+      }
+    }
+  };
+
+  const playWord = (word: string) => {
+    return playPhrase(word);
   };
 
   const runRecognition = (lang: 'fil-PH' | 'tl-PH', canRetry: boolean) => {
@@ -1946,7 +2310,7 @@ function LessonExperience({
       missed: alreadyMissed,
       isRetry: Boolean(exercise.isRetry),
       selfAssessed,
-      hintUsed,
+      hintUsed: hintUsedRef.current,
     });
     const today = localDateKey();
     const reviewKey = `${exercise.baseId}:${exercise.skill}`;
@@ -2075,8 +2439,8 @@ function LessonExperience({
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
             {reviewMode
-              ? 'You brought due phrases back at the right time.'
-              : 'You practiced listening, reading, patterns, and speaking in context.'}
+              ? 'You brought due language skills back at the right time.'
+              : 'You practiced sounds, grammar, listening, reading, and speaking in context.'}
           </p>
           <div className="mt-7 grid grid-cols-3 gap-3">
             <SummaryStat value={`+${sessionXp}`} label="XP" />
@@ -2172,6 +2536,7 @@ function LessonExperience({
               arrangedAnswer={arrangedAnswer}
               feedback={feedback}
               playPhrase={playPhrase}
+              playWord={playWord}
               runRecognition={() => runRecognition('fil-PH', true)}
               toggleRecording={toggleRecording}
               recording={recording}
@@ -2182,6 +2547,14 @@ function LessonExperience({
               onToggleHint={toggleHint}
               onSelfAssess={() => submitAnswer(true)}
             />
+            {voiceStatus &&
+              exercise.kind !== 'listening' &&
+              exercise.kind !== 'speaking' && (
+                <div className="mt-4 flex items-start gap-2 rounded-[8px] bg-[var(--f-blue-3)] p-3 text-xs font-bold leading-5 text-[#183f7b]">
+                  <Volume2 className="mt-0.5 size-4 shrink-0" />
+                  <p aria-live="polite">{voiceStatus}</p>
+                </div>
+              )}
           </div>
         </section>
 
@@ -2251,6 +2624,7 @@ function ExerciseBody({
   arrangedAnswer,
   feedback,
   playPhrase,
+  playWord,
   runRecognition,
   toggleRecording,
   recording,
@@ -2271,7 +2645,8 @@ function ExerciseBody({
   setChosenTiles: React.Dispatch<React.SetStateAction<number[]>>;
   arrangedAnswer: string;
   feedback: Feedback | null;
-  playPhrase: (text: string, slow?: boolean) => void;
+  playPhrase: (text: string, slow?: boolean) => void | Promise<void>;
+  playWord: (word: string) => void | Promise<void>;
   runRecognition: () => void;
   toggleRecording: () => void;
   recording: boolean;
@@ -2282,21 +2657,227 @@ function ExerciseBody({
   onToggleHint: () => void;
   onSelfAssess: () => void;
 }) {
+  if (exercise.kind === 'pronunciation') {
+    return (
+      <>
+        <section className="overflow-hidden rounded-[16px] border border-[#83b7f5] bg-card">
+          <div className="bg-[var(--f-blue-3)] p-5 text-[#183f7b] sm:p-6">
+            <div className="flex items-start gap-3">
+              <span className="grid size-11 shrink-0 place-items-center rounded-[8px] bg-[var(--f-driver-bg)] text-[#10066c]">
+                <Volume2 className="size-5" />
+              </span>
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.1em]">
+                  Notice the sound
+                </p>
+                <h2 className="mt-1 text-xl font-black">
+                  {exercise.lessonTitle}
+                </h2>
+              </div>
+            </div>
+            <p className="mt-4 text-sm leading-6">{exercise.lessonText}</p>
+          </div>
+          <div className="p-5 text-center sm:p-6">
+            <SpeakableTagalog
+              text={exercise.tagalog}
+              onSpeak={playWord}
+              className="text-2xl font-black tracking-[-0.03em]"
+            />
+            <WordAudioHint />
+            <div className="mt-5 flex flex-wrap justify-center gap-3">
+              <Button
+                variant="outline"
+                onClick={() => void playPhrase(exercise.tagalog)}
+                className="min-h-11 rounded-[5px] font-black"
+              >
+                <Volume2 /> Hear model
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void playPhrase(exercise.tagalog, true)}
+                className="min-h-11 rounded-[5px] font-black"
+              >
+                <Pause /> Hear slowly
+              </Button>
+              <Button
+                variant="outline"
+                onClick={toggleRecording}
+                className="min-h-11 rounded-[5px] font-black"
+              >
+                {recording ? (
+                  <Square className="fill-current" />
+                ) : (
+                  <span className="size-3 rounded-full bg-[var(--f-error)]" />
+                )}
+                {recording ? 'Stop recording' : 'Record myself'}
+              </Button>
+            </div>
+            {recordedUrl && (
+              <Button
+                variant="ghost"
+                onClick={() => void new Audio(recordedUrl).play()}
+                className="mx-auto mt-3 min-h-11 rounded-[5px] font-black text-[#183f7b]"
+              >
+                <Play /> Compare my recording
+              </Button>
+            )}
+            <div className="mx-auto mt-5 max-w-xl rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-left text-[#5c4a00]">
+              <p className="text-xs font-black uppercase tracking-[0.1em]">
+                Syllable + stress guide
+              </p>
+              <p className="mt-2 font-black tracking-wide">
+                {exercise.syllables}
+              </p>
+              <p className="mt-2 text-xs leading-5">{exercise.coach}</p>
+            </div>
+            <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
+              Your recording stays in this tab and is discarded when you leave
+              the prompt. Salita does not turn browser recognition into a
+              pronunciation score.
+            </p>
+          </div>
+        </section>
+        <ChoiceOptions
+          options={exercise.options ?? []}
+          selected={selected}
+          setSelected={setSelected}
+          disabled={Boolean(feedback)}
+        />
+        {showTranscript && <LearningHint text={exercise.note} />}
+      </>
+    );
+  }
+
+  if (exercise.kind === 'grammar') {
+    return (
+      <>
+        <section className="overflow-hidden rounded-[16px] border border-border bg-card">
+          <div className="bg-[var(--f-yellow-1)] p-5 text-[#5c4a00] sm:p-6">
+            <div className="flex items-start gap-3">
+              <span className="grid size-11 shrink-0 place-items-center rounded-[8px] bg-[var(--f-yellow-3)] text-[#5c3500]">
+                <Languages className="size-5" />
+              </span>
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.1em]">
+                  Build the sentence
+                </p>
+                <h2 className="mt-1 text-xl font-black">
+                  {exercise.lessonTitle}
+                </h2>
+              </div>
+            </div>
+            <p className="mt-4 text-sm leading-6">{exercise.lessonText}</p>
+            <div className="mt-4 rounded-[8px] bg-white/55 p-3">
+              <p className="text-[10px] font-black uppercase tracking-[0.1em]">
+                Working frame
+              </p>
+              <p lang="fil" className="mt-1 text-sm font-black">
+                {exercise.formula}
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 p-5 sm:grid-cols-2 sm:p-6">
+            {exercise.examples?.map((example) => (
+              <div
+                key={example.fil}
+                className="rounded-[8px] border border-border bg-muted p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <SpeakableTagalog
+                    text={example.fil}
+                    onSpeak={playWord}
+                    className="font-black"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => void playPhrase(example.fil)}
+                    className="grid size-9 shrink-0 place-items-center rounded-full text-[#183f7b] hover:bg-[var(--f-blue-3)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    aria-label={`Hear the complete example: ${example.fil}`}
+                  >
+                    <Volume2 className="size-4" />
+                  </button>
+                </div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {example.en}
+                </p>
+              </div>
+            ))}
+          </div>
+        </section>
+        <ChoiceOptions
+          options={exercise.options ?? []}
+          selected={selected}
+          setSelected={setSelected}
+          disabled={Boolean(feedback)}
+          language="fil"
+        />
+        {showTranscript && <LearningHint text={exercise.note} />}
+      </>
+    );
+  }
+
+  if (exercise.kind === 'passage') {
+    return (
+      <>
+        <section className="rounded-[16px] border border-border bg-card p-5 sm:p-7">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.1em] text-[#9c0040]">
+                Read for meaning
+              </p>
+              <h2 className="mt-1 text-xl font-black">
+                {exercise.lessonTitle}
+              </h2>
+            </div>
+            <Button
+              variant="outline"
+              size="icon-lg"
+              onClick={() => void playPhrase(exercise.tagalog)}
+              className="size-11 shrink-0 rounded-full"
+              aria-label="Hear the complete reading"
+            >
+              <Volume2 />
+            </Button>
+          </div>
+          <div className="mt-5 rounded-[8px] bg-[var(--f-blue-3)] p-4 text-[#183f7b]">
+            <SpeakableTagalog
+              text={exercise.tagalog}
+              onSpeak={playWord}
+              className="text-base font-bold leading-7"
+            />
+          </div>
+          <WordAudioHint />
+          {showTranscript && (
+            <div className="mt-4 rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-sm leading-6 text-[#5c4a00]">
+              <strong>English support:</strong> {exercise.translation}
+            </div>
+          )}
+        </section>
+        <ChoiceOptions
+          options={exercise.options ?? []}
+          selected={selected}
+          setSelected={setSelected}
+          disabled={Boolean(feedback)}
+        />
+      </>
+    );
+  }
+
   if (exercise.kind === 'listening') {
     return (
       <>
         <div className="flex min-h-48 flex-col items-center justify-center rounded-[16px] bg-[var(--f-blue-3)] p-6 text-center text-[#183f7b]">
           <button
-            onClick={() => playPhrase(exercise.tagalog)}
+            onClick={() => void playPhrase(exercise.tagalog)}
             className="grid size-18 place-items-center rounded-full bg-[var(--f-driver-bg)] text-[#10066c] shadow-[0_2px_10px_rgba(25,1,52,0.12)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            aria-label="Play phrase with device voice"
+            aria-label="Play phrase with Filipino voice"
           >
             <Volume2 className="size-8" />
           </button>
           <div className="mt-4 flex gap-2">
             <Button
               variant="ghost"
-              onClick={() => playPhrase(exercise.tagalog, true)}
+              onClick={() => void playPhrase(exercise.tagalog, true)}
               className="min-h-11 rounded-[5px] font-black text-[#183f7b]"
             >
               <Pause /> Slow
@@ -2311,12 +2892,17 @@ function ExerciseBody({
             </Button>
           </div>
           <p className="mt-2 text-xs font-bold" aria-live="polite">
-            {voiceStatus || 'Synthetic device voice · tap to listen'}
+            {voiceStatus || 'Filipino neural voice · tap to listen'}
           </p>
           {showTranscript && (
-            <p lang="fil" className="mt-4 text-xl font-black">
-              {exercise.tagalog}
-            </p>
+            <div className="mt-4">
+              <SpeakableTagalog
+                text={exercise.tagalog}
+                onSpeak={playWord}
+                className="text-xl font-black"
+              />
+              <WordAudioHint />
+            </div>
           )}
         </div>
         <ChoiceOptions
@@ -2332,7 +2918,11 @@ function ExerciseBody({
   if (exercise.kind === 'arrange') {
     return (
       <>
-        <PromptCard english={exercise.english} register={exercise.register} />
+        <PromptCard
+          english={exercise.english}
+          register={exercise.register}
+          onSpeak={playWord}
+        />
         <div
           className="mt-5 min-h-18 rounded-[8px] border-b-2 border-[#3174d2] bg-card p-4"
           aria-label="Your sentence"
@@ -2347,11 +2937,17 @@ function ExerciseBody({
                   <button
                     key={tileIndex}
                     disabled={Boolean(feedback)}
-                    onClick={() =>
+                    onClick={() => {
+                      const speech = tile?.token
+                        ? segmentTagalogText(tile.token).find(
+                            (segment) => segment.speech,
+                          )?.speech
+                        : null;
+                      if (speech) void playPhrase(speech);
                       setChosenTiles((current) =>
                         current.filter((index) => index !== tileIndex),
-                      )
-                    }
+                      );
+                    }}
                     className="min-h-11 rounded-[5px] bg-[var(--f-pink-3)] px-3 py-2 text-sm font-black text-[#9c0040]"
                   >
                     {tile?.token}
@@ -2375,9 +2971,14 @@ function ExerciseBody({
               <button
                 key={tile.tileIndex}
                 disabled={used || Boolean(feedback)}
-                onClick={() =>
-                  setChosenTiles((current) => [...current, tile.tileIndex])
-                }
+                onClick={() => {
+                  const speech = segmentTagalogText(tile.token).find(
+                    (segment) => segment.speech,
+                  )?.speech;
+                  if (speech) void playPhrase(speech);
+                  setChosenTiles((current) => [...current, tile.tileIndex]);
+                }}
+                aria-label={`Add “${tile.token}” and hear it pronounced`}
                 className="min-h-11 rounded-[5px] border border-border bg-card px-4 text-sm font-black shadow-[0_2px_6px_rgba(25,1,52,0.06)] disabled:opacity-25"
               >
                 {tile.token}
@@ -2386,7 +2987,11 @@ function ExerciseBody({
           })}
         </div>
         {showTranscript && (
-          <HintPanel tagalog={exercise.tagalog} note={exercise.note} />
+          <HintPanel
+            tagalog={exercise.tagalog}
+            note={exercise.note}
+            onSpeak={playWord}
+          />
         )}
         <span className="sr-only">Current answer: {arrangedAnswer}</span>
       </>
@@ -2400,26 +3005,26 @@ function ExerciseBody({
           <Tag className={REGISTER_STYLES[exercise.register]}>
             {exercise.register}
           </Tag>
-          <p
-            lang="fil"
+          <SpeakableTagalog
+            text={exercise.tagalog}
+            onSpeak={playWord}
             className="mt-4 text-3xl font-black tracking-[-0.035em]"
-          >
-            {exercise.tagalog}
-          </p>
+          />
+          <WordAudioHint />
           <p className="mt-2 text-sm text-muted-foreground">
             {exercise.english}
           </p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <Button
               variant="outline"
-              onClick={() => playPhrase(exercise.tagalog)}
+              onClick={() => void playPhrase(exercise.tagalog)}
               className="min-h-12 rounded-[5px] font-black"
             >
               <Volume2 /> Hear model
             </Button>
             <Button
               variant="outline"
-              onClick={() => playPhrase(exercise.tagalog, true)}
+              onClick={() => void playPhrase(exercise.tagalog, true)}
               className="min-h-12 rounded-[5px] font-black"
             >
               <Pause /> Hear slowly
@@ -2501,7 +3106,11 @@ function ExerciseBody({
           stay in this tab and are discarded when you leave the prompt.
         </div>
         {showTranscript && (
-          <HintPanel tagalog={exercise.tagalog} note={exercise.note} />
+          <HintPanel
+            tagalog={exercise.tagalog}
+            note={exercise.note}
+            onSpeak={playWord}
+          />
         )}
       </>
     );
@@ -2518,12 +3127,9 @@ function ExerciseBody({
             <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--f-driver-bg)] text-sm font-black text-[#10066c]">
               A
             </span>
-            <p
-              lang="fil"
-              className="rounded-[8px] bg-card px-4 py-3 text-lg font-black text-foreground shadow-[0_2px_10px_rgba(25,1,52,0.08)]"
-            >
-              {exercise.tagalog}
-            </p>
+            <div className="rounded-[8px] bg-card px-4 py-3 text-lg font-black text-foreground shadow-[0_2px_10px_rgba(25,1,52,0.08)]">
+              <SpeakableTagalog text={exercise.tagalog} onSpeak={playWord} />
+            </div>
           </div>
         </div>
         <ChoiceOptions
@@ -2534,7 +3140,11 @@ function ExerciseBody({
           language="fil"
         />
         {showTranscript && (
-          <HintPanel tagalog={exercise.correct} note={exercise.note} />
+          <HintPanel
+            tagalog={exercise.correct}
+            note={exercise.note}
+            onSpeak={playWord}
+          />
         )}
       </>
     );
@@ -2543,14 +3153,20 @@ function ExerciseBody({
   if (exercise.kind === 'pattern') {
     return (
       <>
-        <PromptCard english={exercise.english} register={exercise.register} />
+        <PromptCard
+          english={exercise.english}
+          register={exercise.register}
+          onSpeak={playWord}
+        />
         <div className="mt-5 rounded-[8px] border border-[#83b7f5] bg-[var(--f-blue-3)] p-4 text-[#183f7b]">
           <p className="text-xs font-black uppercase tracking-[0.1em]">
             Sentence frame
           </p>
-          <p lang="fil" className="mt-2 text-lg font-black">
-            {exercise.patternFrame}
-          </p>
+          <SpeakableTagalog
+            text={exercise.patternFrame ?? ''}
+            onSpeak={playWord}
+            className="mt-2 text-lg font-black"
+          />
           <p className="mt-2 text-sm">
             <strong>Swap:</strong> {exercise.patternTransform}
           </p>
@@ -2563,7 +3179,11 @@ function ExerciseBody({
           language="fil"
         />
         {showTranscript && (
-          <HintPanel tagalog={exercise.tagalog} note={exercise.note} />
+          <HintPanel
+            tagalog={exercise.tagalog}
+            note={exercise.note}
+            onSpeak={playWord}
+          />
         )}
       </>
     );
@@ -2575,6 +3195,7 @@ function ExerciseBody({
         tagalog={exercise.kind === 'reading' ? exercise.tagalog : undefined}
         english={exercise.kind === 'reading' ? undefined : exercise.english}
         register={exercise.register}
+        onSpeak={playWord}
       />
       <ChoiceOptions
         options={exercise.options ?? []}
@@ -2584,9 +3205,66 @@ function ExerciseBody({
         language={exercise.kind === 'context' ? 'fil' : 'en'}
       />
       {showTranscript && (
-        <HintPanel tagalog={exercise.tagalog} note={exercise.note} />
+        <HintPanel
+          tagalog={exercise.tagalog}
+          note={exercise.note}
+          onSpeak={playWord}
+        />
       )}
     </>
+  );
+}
+
+function SpeakableTagalog({
+  text,
+  onSpeak,
+  className = '',
+}: {
+  text: string;
+  onSpeak: (word: string) => void | Promise<void>;
+  className?: string;
+}) {
+  return (
+    <span lang="fil" className={`inline leading-relaxed ${className}`}>
+      {segmentTagalogText(text).map((segment, index) =>
+        segment.speech ? (
+          <button
+            key={`${segment.display}-${index}`}
+            type="button"
+            onClick={() => void onSpeak(segment.speech!)}
+            aria-label={
+              segment.display.toLocaleLowerCase('fil-PH') ===
+              segment.speech.toLocaleLowerCase('fil-PH')
+                ? `Hear “${segment.display}” pronounced`
+                : `Hear “${segment.display},” pronounced “${segment.speech}”`
+            }
+            title={`Hear “${segment.display}”`}
+            className="inline-flex min-h-9 items-center rounded-[4px] px-0.5 [font:inherit] text-[inherit] underline decoration-[#3174d2] decoration-dotted decoration-2 underline-offset-4 hover:bg-[var(--f-blue-3)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          >
+            {segment.display}
+          </button>
+        ) : (
+          <span key={`${segment.display}-${index}`}>{segment.display}</span>
+        ),
+      )}
+    </span>
+  );
+}
+
+function WordAudioHint() {
+  return (
+    <p className="mt-2 text-xs font-bold text-muted-foreground">
+      Tap any underlined word to hear it.
+    </p>
+  );
+}
+
+function LearningHint({ text }: { text: string }) {
+  return (
+    <div className="mt-5 flex items-start gap-3 rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-[#5c4a00]">
+      <CircleHelp className="mt-0.5 size-5 shrink-0" />
+      <p className="text-xs leading-5">{text}</p>
+    </div>
   );
 }
 
@@ -2594,21 +3272,25 @@ function PromptCard({
   tagalog,
   english,
   register,
+  onSpeak,
 }: {
   tagalog?: string;
   english?: string;
   register: Register;
+  onSpeak: (word: string) => void | Promise<void>;
 }) {
   return (
     <div className="rounded-[16px] border border-border bg-card p-6 text-center sm:p-8">
       <Tag className={REGISTER_STYLES[register]}>{register}</Tag>
       {tagalog && (
-        <p
-          lang="fil"
-          className="mt-4 text-2xl font-black tracking-[-0.03em] sm:text-3xl"
-        >
-          {tagalog}
-        </p>
+        <div className="mt-4">
+          <SpeakableTagalog
+            text={tagalog}
+            onSpeak={onSpeak}
+            className="text-2xl font-black tracking-[-0.03em] sm:text-3xl"
+          />
+          <WordAudioHint />
+        </div>
       )}
       {english && (
         <p
@@ -2668,14 +3350,24 @@ function ChoiceOptions({
   );
 }
 
-function HintPanel({ tagalog, note }: { tagalog: string; note: string }) {
+function HintPanel({
+  tagalog,
+  note,
+  onSpeak,
+}: {
+  tagalog: string;
+  note: string;
+  onSpeak: (word: string) => void | Promise<void>;
+}) {
   return (
     <div className="mt-5 flex items-start gap-3 rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-[#5c4a00]">
       <CircleHelp className="mt-0.5 size-5 shrink-0" />
       <div>
-        <p lang="fil" className="font-black">
-          {tagalog}
-        </p>
+        <SpeakableTagalog
+          text={tagalog}
+          onSpeak={onSpeak}
+          className="font-black"
+        />
         <p className="mt-1 text-xs leading-5">{note}</p>
       </div>
     </div>
