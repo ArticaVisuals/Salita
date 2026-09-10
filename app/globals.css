@@ -1,0 +1,176 @@
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@import 'shadcn/tailwind.css';
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-geist-sans);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --radius-sm: 5px;
+  --radius-md: 8px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+}
+
+:root {
+  /* Flamingo v3 foundations, mapped to the Salita learning experience. */
+  --f-pink-1: #ff4d95;
+  --f-pink-2: #ff9dc5;
+  --f-pink-3: #ffd3e9;
+  --f-pink-light: #fe679c;
+  --f-blue-1: #4d94ff;
+  --f-blue-2: #83b7f5;
+  --f-blue-3: #d3e5f9;
+  --f-yellow-1: #fff4b7;
+  --f-yellow-3: #ffe927;
+  --f-yellow-4: #ffc700;
+  --f-green-1: #e7f6c6;
+  --f-green-3: #33a879;
+  --f-green-4: #007043;
+  --f-cyan-1: #d5e2f3;
+  --f-cyan-4: #0087c0;
+  --f-success: #33a879;
+  --f-success-strong: #007043;
+  --f-error: #cd2703;
+  --f-driver-bg: #4d94ff;
+  --background: #ebeff7;
+  --foreground: #000000;
+  --card: #ffffff;
+  --card-foreground: #000000;
+  --popover: #ffffff;
+  --popover-foreground: #000000;
+  --primary: #ff2773;
+  --primary-foreground: #000000;
+  --secondary: #d3e5f9;
+  --secondary-foreground: #10066c;
+  --muted: #f3f5f9;
+  --muted-foreground: #616669;
+  --accent: #fff4b7;
+  --accent-foreground: #000000;
+  --destructive: #cd2703;
+  --border: #dde3ee;
+  --input: #dde3ee;
+  --ring: #3174d2;
+  --radius: 8px;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #000000;
+  --sidebar-primary: #ff2773;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #ebeff7;
+  --sidebar-accent-foreground: #000000;
+  --sidebar-border: #dde3ee;
+  --sidebar-ring: #3174d2;
+  --chart-1: #ff2773;
+  --chart-2: #3174d2;
+  --chart-3: #33a879;
+  --chart-4: #ffc700;
+  --chart-5: #804aaf;
+}
+
+.dark {
+  --background: #17171a;
+  --foreground: #ffffff;
+  --card: #222226;
+  --card-foreground: #ffffff;
+  --popover: #222226;
+  --popover-foreground: #ffffff;
+  --primary: #ff4d95;
+  --primary-foreground: #000000;
+  --secondary: #20275f;
+  --secondary-foreground: #ffffff;
+  --muted: #2d2d32;
+  --muted-foreground: #b9bec5;
+  --accent: #4c4511;
+  --accent-foreground: #fff4b7;
+  --destructive: #fa7383;
+  --border: #3b3b42;
+  --input: #3b3b42;
+  --ring: #83b7f5;
+  --sidebar: #222226;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #ff4d95;
+  --sidebar-primary-foreground: #000000;
+  --sidebar-accent: #2d2d32;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #3b3b42;
+  --sidebar-ring: #83b7f5;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html {
+    @apply font-sans;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: Avenir, var(--font-geist-sans), Arial, sans-serif;
+    line-height: 1.25;
+  }
+  button,
+  a {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+.lesson-orbit {
+  position: absolute;
+  width: 280px;
+  height: 280px;
+  right: -42px;
+  top: -66px;
+  border: 24px solid rgba(255, 255, 255, 0.11);
+  border-radius: 999px;
+  box-shadow: 0 0 0 36px rgba(255, 255, 255, 0.06);
+}
+
+.lesson-orbit::after {
+  content: '';
+  position: absolute;
+  width: 72px;
+  height: 72px;
+  inset: 80px;
+  border-radius: 999px;
+  background: var(--f-yellow-3);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button,
+  a {
+    transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  }
+}

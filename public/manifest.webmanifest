@@ -1,0 +1,18 @@
+{
+  "name": "Salita — Learn Tagalog every day",
+  "short_name": "Salita",
+  "description": "Short, practical Tagalog lessons for listening, reading, speaking, and real conversation.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#ebeff7",
+  "theme_color": "#ff2773",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
