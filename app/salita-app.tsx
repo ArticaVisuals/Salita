@@ -36,6 +36,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
+  useSpeechAssessment,
+  type SpeechSessionState,
+} from '@/hooks/use-speech-assessment';
+import {
   getUnit,
   nextUnitAfter,
   type Phrase,
@@ -60,6 +64,7 @@ import {
   type SkillMode,
 } from '@/lib/progress';
 import { segmentTagalogText } from '@/lib/tagalog-speech';
+import type { SpeechAssessmentLanguage } from '@/lib/speech-assessment';
 
 type View = 'today' | 'learn' | 'review' | 'progress';
 type ExerciseKind =
@@ -106,23 +111,6 @@ type Feedback = {
   correct: boolean;
   title: string;
   detail: string;
-};
-
-type SpeechRecognitionResultLike = {
-  0: { transcript: string; confidence: number };
-};
-
-type SpeechRecognitionLike = {
-  lang: string;
-  continuous: boolean;
-  interimResults: boolean;
-  onresult:
-    | ((event: { results: { 0: SpeechRecognitionResultLike } }) => void)
-    | null;
-  onerror: ((event: { error: string }) => void) | null;
-  onend: (() => void) | null;
-  start(): void;
-  stop(): void;
 };
 
 type ModelContextLike = {
@@ -1161,7 +1149,7 @@ function VoiceConnectionCard() {
         </span>
         <div>
           <div className="flex flex-wrap items-center gap-2">
-            <p className="font-black">Filipino voice</p>
+            <p className="font-black">Azure speech</p>
             <Tag
               className={
                 voice === null
@@ -1174,14 +1162,14 @@ function VoiceConnectionCard() {
               {voice === null
                 ? 'Checking'
                 : connected
-                  ? 'Azure connected'
+                  ? 'Configured'
                   : 'Setup needed'}
             </Tag>
           </div>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             {connected
-              ? `${voice.voice?.replace('fil-PH-', '').replace('Neural', '') ?? 'Filipino'} neural voice · tap any underlined Tagalog word.`
-              : 'Azure Speech support is built in. Until credentials are connected, Salita uses only a correctly matched Filipino device voice.'}
+              ? `Configured for the ${voice.voice?.replace('fil-PH-', '').replace('Neural', '') ?? 'Filipino'} neural voice, Filipino word recognition, and English pronunciation coaching.`
+              : 'Azure support is built in for Filipino audio and recognition plus English pronunciation coaching. Add one Speech key and region to activate it.'}
           </p>
         </div>
       </div>
@@ -1902,19 +1890,58 @@ function LessonExperience({
   const [missed, setMissed] = useState<Set<string>>(new Set());
   const [complete, setComplete] = useState(false);
   const [voiceStatus, setVoiceStatus] = useState('');
-  const [heard, setHeard] = useState('');
   const [showTranscript, setShowTranscript] = useState(false);
   const hintUsedRef = useRef(false);
   const [recording, setRecording] = useState(false);
+  const [recordingPending, setRecordingPending] = useState(false);
+  const [speechFallbackChosen, setSpeechFallbackChosen] = useState(false);
   const [recordedUrl, setRecordedUrl] = useState('');
   const recorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const recordingRequestIdRef = useRef(0);
+  const recordingPendingRef = useRef(false);
   const modelAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechRequestRef = useRef<AbortController | null>(null);
   const audioCacheRef = useRef<Map<string, string>>(new Map());
   const cloudVoiceUnavailableRef = useRef(false);
   const playbackIdRef = useRef(0);
   const startedAtRef = useRef(0);
+  const stopPlaybackAndRecordingForMic = useCallback(() => {
+    recordingRequestIdRef.current += 1;
+    recordingPendingRef.current = false;
+    playbackIdRef.current += 1;
+    speechRequestRef.current?.abort();
+    speechRequestRef.current = null;
+    modelAudioRef.current?.pause();
+    modelAudioRef.current = null;
+    window.speechSynthesis?.cancel();
+    const recorder = recorderRef.current;
+    if (recorder) {
+      recorder.ondataavailable = null;
+      recorder.onstop = null;
+      recorder.onerror = null;
+      if (recorder.state !== 'inactive') {
+        try {
+          recorder.stop();
+        } catch {
+          // The media tracks below still release the microphone.
+        }
+      }
+    }
+    recorderRef.current = null;
+    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current = null;
+    setRecording(false);
+    setRecordingPending(false);
+    setRecordedUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return '';
+    });
+    setVoiceStatus('');
+  }, []);
+  const speechCoach = useSpeechAssessment({
+    onBeforeStart: stopPlaybackAndRecordingForMic,
+  });
   const exercise = queue[index];
   const totalNewPrompts = initialExercises.length;
 
@@ -1922,6 +1949,8 @@ function LessonExperience({
     startedAtRef.current = Date.now();
     const audioCache = audioCacheRef.current;
     return () => {
+      recordingRequestIdRef.current += 1;
+      recordingPendingRef.current = false;
       const recorder = recorderRef.current;
       if (recorder) {
         recorder.ondataavailable = null;
@@ -1958,12 +1987,16 @@ function LessonExperience({
     setChosenTiles([]);
     setFeedback(null);
     setVoiceStatus('');
-    setHeard('');
     setShowTranscript(false);
+    speechCoach.reset();
     hintUsedRef.current = false;
     if (recordedUrl) URL.revokeObjectURL(recordedUrl);
     setRecordedUrl('');
     setRecording(false);
+    setRecordingPending(false);
+    setSpeechFallbackChosen(false);
+    recordingRequestIdRef.current += 1;
+    recordingPendingRef.current = false;
     playbackIdRef.current += 1;
     speechRequestRef.current?.abort();
     speechRequestRef.current = null;
@@ -2042,6 +2075,7 @@ function LessonExperience({
   };
 
   const playPhrase = async (text: string, slow = false) => {
+    if (speechCoach.busy || recording || recordingPending) return;
     const playbackId = playbackIdRef.current + 1;
     playbackIdRef.current = playbackId;
     speechRequestRef.current?.abort();
@@ -2155,59 +2189,8 @@ function LessonExperience({
     return playPhrase(word);
   };
 
-  const runRecognition = (lang: 'fil-PH' | 'tl-PH', canRetry: boolean) => {
-    const speechWindow = window as typeof window & {
-      SpeechRecognition?: new () => SpeechRecognitionLike;
-      webkitSpeechRecognition?: new () => SpeechRecognitionLike;
-    };
-    const Recognition =
-      speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition;
-    if (!Recognition) {
-      setVoiceStatus(
-        'Live speech recognition is not available here. Record and compare, or type what you said.',
-      );
-      return;
-    }
-    const recognition = new Recognition();
-    recognition.lang = lang;
-    recognition.continuous = false;
-    recognition.interimResults = false;
-    setVoiceStatus('Listening…');
-    recognition.onresult = (event) => {
-      const result = event.results[0][0];
-      setHeard(result.transcript);
-      setTyped(result.transcript);
-      setVoiceStatus(`I heard: “${result.transcript}”`);
-    };
-    recognition.onerror = (event) => {
-      if (
-        canRetry &&
-        (event.error === 'language-not-supported' ||
-          event.error === 'bad-grammar')
-      ) {
-        runRecognition('tl-PH', false);
-        return;
-      }
-      setVoiceStatus(
-        'I couldn’t capture that. Record and compare, or type what you said—your lesson still counts.',
-      );
-    };
-    recognition.onend = () =>
-      setVoiceStatus((status) =>
-        status === 'Listening…'
-          ? 'No speech captured. Try again or use the fallback.'
-          : status,
-      );
-    try {
-      recognition.start();
-    } catch {
-      setVoiceStatus(
-        'The microphone is busy. Try again or use the recording fallback.',
-      );
-    }
-  };
-
   const toggleRecording = async () => {
+    if (speechCoach.busy || recordingPendingRef.current) return;
     if (recording) {
       const recorder = recorderRef.current;
       if (!recorder || recorder.state === 'inactive') {
@@ -2242,8 +2225,29 @@ function LessonExperience({
       );
       return;
     }
+    recordingRequestIdRef.current += 1;
+    const recordingRequestId = recordingRequestIdRef.current;
+    recordingPendingRef.current = true;
+    playbackIdRef.current += 1;
+    speechRequestRef.current?.abort();
+    speechRequestRef.current = null;
+    modelAudioRef.current?.pause();
+    modelAudioRef.current = null;
+    window.speechSynthesis?.cancel();
+    setRecordedUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return '';
+    });
+    setRecordingPending(true);
+    setVoiceStatus('Waiting for microphone permission…');
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      if (recordingRequestId !== recordingRequestIdRef.current) {
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
+      recordingPendingRef.current = false;
+      setRecordingPending(false);
       streamRef.current = stream;
       const recorder = new MediaRecorder(stream);
       const chunks: BlobPart[] = [];
@@ -2278,10 +2282,13 @@ function LessonExperience({
       setRecording(true);
       setVoiceStatus('Recording… Tap stop when you’re done. Nothing is saved.');
     } catch {
+      if (recordingRequestId !== recordingRequestIdRef.current) return;
+      recordingPendingRef.current = false;
       streamRef.current?.getTracks().forEach((track) => track.stop());
       streamRef.current = null;
       recorderRef.current = null;
       setRecording(false);
+      setRecordingPending(false);
       setVoiceStatus(
         'Microphone permission was not available. Practice aloud or type instead—your lesson still counts.',
       );
@@ -2289,7 +2296,15 @@ function LessonExperience({
   };
 
   const submitAnswer = (selfAssessed = false) => {
-    if (!exercise || feedback) return;
+    if (
+      !exercise ||
+      feedback ||
+      speechCoach.busy ||
+      recording ||
+      recordingPending
+    ) {
+      return;
+    }
     const answer =
       exercise.kind === 'arrange'
         ? arrangedAnswer
@@ -2298,18 +2313,33 @@ function LessonExperience({
           : selected;
     const accepted =
       exercise.kind === 'arrange' ? [exercise.tagalog] : exercise.accepted;
+    const tagalogSpeechResult =
+      exercise.kind === 'speaking' && speechCoach.state.results['fil-PH']
+        ? speechCoach.state.results['fil-PH']
+        : null;
+    const speechWasUnderstood =
+      tagalogSpeechResult?.level === 'verified' ||
+      tagalogSpeechResult?.level === 'understood';
     const isCorrect =
       selfAssessed ||
+      speechWasUnderstood ||
       accepted.some(
         (item) => normalizeAnswer(item) === normalizeAnswer(answer),
       );
     const alreadyMissed =
       missed.has(exercise.baseId) || Boolean(exercise.isRetry);
+    const typedSpeakingFallback =
+      exercise.kind === 'speaking' && !speechWasUnderstood;
     const score = scoreAttempt({
       correct: isCorrect,
       missed: alreadyMissed,
       isRetry: Boolean(exercise.isRetry),
-      selfAssessed,
+      selfAssessed:
+        selfAssessed ||
+        typedSpeakingFallback ||
+        tagalogSpeechResult?.level === 'understood' ||
+        (exercise.kind === 'speaking' &&
+          (speechCoach.state.bestAttemptByLanguage['fil-PH'] ?? 1) > 1),
       hintUsed: hintUsedRef.current,
     });
     const today = localDateKey();
@@ -2371,6 +2401,7 @@ function LessonExperience({
   };
 
   const continueLesson = () => {
+    if (speechCoach.busy || recording || recordingPending) return;
     if (index + 1 >= queue.length) {
       onFinish(unit, {
         xp: sessionXp,
@@ -2476,11 +2507,16 @@ function LessonExperience({
   }
 
   const answerReady =
-    exercise.kind === 'arrange'
+    !speechCoach.busy &&
+    !recording &&
+    !recordingPending &&
+    (exercise.kind === 'arrange'
       ? chosenTiles.length > 0
       : exercise.kind === 'speaking'
-        ? typed.trim().length > 0
-        : selected.length > 0;
+        ? typed.trim().length > 0 ||
+          speechCoach.state.results['fil-PH']?.level === 'verified' ||
+          speechCoach.state.results['fil-PH']?.level === 'understood'
+        : selected.length > 0);
   const progressPercent = Math.round((index / queue.length) * 100);
 
   return (
@@ -2537,15 +2573,22 @@ function LessonExperience({
               feedback={feedback}
               playPhrase={playPhrase}
               playWord={playWord}
-              runRecognition={() => runRecognition('fil-PH', true)}
+              speechState={speechCoach.state}
+              speechBusy={speechCoach.busy}
+              onStartSpeech={(language) =>
+                void speechCoach.start(exercise.baseId, language)
+              }
+              onStopSpeech={speechCoach.stop}
               toggleRecording={toggleRecording}
               recording={recording}
+              recordingPending={recordingPending}
+              speechFallbackChosen={speechFallbackChosen}
               recordedUrl={recordedUrl}
               voiceStatus={voiceStatus}
-              heard={heard}
               showTranscript={showTranscript}
               onToggleHint={toggleHint}
               onSelfAssess={() => submitAnswer(true)}
+              onChooseSpeechFallback={() => setSpeechFallbackChosen(true)}
             />
             {voiceStatus &&
               exercise.kind !== 'listening' &&
@@ -2592,6 +2635,7 @@ function LessonExperience({
             {feedback ? (
               <Button
                 onClick={continueLesson}
+                disabled={speechCoach.busy || recording || recordingPending}
                 className="min-h-12 min-w-36 rounded-[5px] bg-[var(--f-success)] px-5 font-black text-black hover:bg-[#72d1a4]"
               >
                 Continue <ArrowRight />
@@ -2612,6 +2656,138 @@ function LessonExperience({
   );
 }
 
+function SpeechAssessmentPanel({ state }: { state: SpeechSessionState }) {
+  const activeCopy: Partial<Record<SpeechSessionState['phase'], string>> = {
+    'requesting-permission': 'Waiting for microphone permission…',
+    connecting: 'Connecting securely to Azure Speech…',
+    listening: 'Listening… Speak naturally; Salita stops after your phrase.',
+    scoring: 'Checking what Azure heard…',
+  };
+  const active = activeCopy[state.phase];
+  if (active) {
+    return (
+      <output className="mt-4 flex items-center gap-3 rounded-[8px] bg-[var(--f-blue-3)] p-4 text-left text-sm font-bold text-[#183f7b]">
+        <span className="relative grid size-9 shrink-0 place-items-center rounded-full bg-[var(--f-driver-bg)] text-[#10066c]">
+          <span className="absolute inset-0 animate-ping rounded-full bg-[#83b7f5]/45" />
+          <Mic className="relative size-4" />
+        </span>
+        <p aria-live="polite">{active}</p>
+      </output>
+    );
+  }
+
+  if (state.error) {
+    return (
+      <output className="mt-4 flex items-start gap-3 rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-left text-xs leading-5 text-[#5c4a00]">
+        <Info className="mt-0.5 size-4 shrink-0" />
+        <p aria-live="polite">{state.error}</p>
+      </output>
+    );
+  }
+
+  const result = state.result;
+  if (!result) return null;
+  const verified = result.level === 'verified';
+  const understood = result.level === 'understood';
+  const title =
+    result.level === 'unscored'
+      ? 'Nothing was scored'
+      : verified
+        ? result.language === 'fil-PH'
+          ? 'Words understood clearly'
+          : 'Clear English match'
+        : understood
+          ? 'Understood—refine one part'
+          : 'Try one part again';
+  const panelStyle = verified
+    ? 'bg-[var(--f-green-1)] text-[var(--f-green-4)]'
+    : understood
+      ? 'bg-[var(--f-yellow-1)] text-[#5c4a00]'
+      : result.level === 'retry'
+        ? 'bg-[#fcabb4] text-[#71000f]'
+        : 'bg-muted text-muted-foreground';
+
+  return (
+    <output
+      className={`mt-4 rounded-[8px] p-4 text-left ${panelStyle}`}
+      aria-live="polite"
+    >
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <p className="text-[10px] font-black uppercase tracking-[0.1em]">
+            {result.language === 'fil-PH'
+              ? 'Filipino speech match'
+              : 'English pronunciation coaching'}
+          </p>
+          <p className="mt-1 font-black">{title}</p>
+        </div>
+        {result.language === 'fil-PH' && result.level !== 'unscored' && (
+          <Tag className="bg-white/55 text-current">
+            {result.matchScore}% word match
+          </Tag>
+        )}
+      </div>
+      {state.retainedBest && (
+        <p className="mt-2 text-xs font-bold">
+          Your stronger earlier attempt still counts; this panel keeps that best
+          result.
+        </p>
+      )}
+      {result.transcript && (
+        <p className="mt-3 text-sm leading-5">
+          {result.usedAlternateHypothesis
+            ? 'Closest Azure match'
+            : 'Azure heard'}
+          : <strong>“{result.transcript}”</strong>
+        </p>
+      )}
+      {result.pronunciation && result.level !== 'unscored' && (
+        <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {[
+            ['Overall', result.pronunciation.pronunciation],
+            ['Accuracy', result.pronunciation.accuracy],
+            ['Fluency', result.pronunciation.fluency],
+            ['Complete', result.pronunciation.completeness],
+          ].map(([label, score]) => (
+            <div key={String(label)} className="rounded-[6px] bg-white/55 p-2">
+              <p className="text-lg font-black">{Math.round(Number(score))}</p>
+              <p className="text-[10px] font-black uppercase tracking-wide">
+                {label}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+      {result.level !== 'unscored' && result.lowAccuracyWords.length > 0 && (
+        <div className="mt-3">
+          <p className="text-xs font-black">Listen and retry these words:</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {result.lowAccuracyWords.slice(0, 1).map((word) => (
+              <span
+                key={`${word.word}-${word.accuracy ?? 'unknown'}`}
+                className="rounded-full bg-white/60 px-3 py-1 text-xs font-black"
+              >
+                {word.word}
+                {word.accuracy === null
+                  ? ''
+                  : ` · ${Math.round(word.accuracy)}`}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
+      {result.level === 'retry' && result.missingWords.length > 0 && (
+        <p className="mt-3 text-xs leading-5">
+          Listen for: <strong>{result.missingWords.join(' · ')}</strong>
+        </p>
+      )}
+      {result.reminder && (
+        <p className="mt-3 text-xs leading-5">{result.reminder}</p>
+      )}
+    </output>
+  );
+}
+
 function ExerciseBody({
   exercise,
   selected,
@@ -2625,15 +2801,20 @@ function ExerciseBody({
   feedback,
   playPhrase,
   playWord,
-  runRecognition,
+  speechState,
+  speechBusy,
+  onStartSpeech,
+  onStopSpeech,
   toggleRecording,
   recording,
+  recordingPending,
+  speechFallbackChosen,
   recordedUrl,
   voiceStatus,
-  heard,
   showTranscript,
   onToggleHint,
   onSelfAssess,
+  onChooseSpeechFallback,
 }: {
   exercise: Exercise;
   selected: string;
@@ -2647,15 +2828,20 @@ function ExerciseBody({
   feedback: Feedback | null;
   playPhrase: (text: string, slow?: boolean) => void | Promise<void>;
   playWord: (word: string) => void | Promise<void>;
-  runRecognition: () => void;
+  speechState: SpeechSessionState;
+  speechBusy: boolean;
+  onStartSpeech: (language: SpeechAssessmentLanguage) => void;
+  onStopSpeech: () => void;
   toggleRecording: () => void;
   recording: boolean;
+  recordingPending: boolean;
+  speechFallbackChosen: boolean;
   recordedUrl: string;
   voiceStatus: string;
-  heard: string;
   showTranscript: boolean;
   onToggleHint: () => void;
   onSelfAssess: () => void;
+  onChooseSpeechFallback: () => void;
 }) {
   if (exercise.kind === 'pronunciation') {
     return (
@@ -2688,6 +2874,12 @@ function ExerciseBody({
               <Button
                 variant="outline"
                 onClick={() => void playPhrase(exercise.tagalog)}
+                disabled={
+                  speechBusy ||
+                  recording ||
+                  recordingPending ||
+                  Boolean(feedback)
+                }
                 className="min-h-11 rounded-[5px] font-black"
               >
                 <Volume2 /> Hear model
@@ -2695,6 +2887,12 @@ function ExerciseBody({
               <Button
                 variant="outline"
                 onClick={() => void playPhrase(exercise.tagalog, true)}
+                disabled={
+                  speechBusy ||
+                  recording ||
+                  recordingPending ||
+                  Boolean(feedback)
+                }
                 className="min-h-11 rounded-[5px] font-black"
               >
                 <Pause /> Hear slowly
@@ -2702,6 +2900,7 @@ function ExerciseBody({
               <Button
                 variant="outline"
                 onClick={toggleRecording}
+                disabled={speechBusy || recordingPending || Boolean(feedback)}
                 className="min-h-11 rounded-[5px] font-black"
               >
                 {recording ? (
@@ -2709,7 +2908,21 @@ function ExerciseBody({
                 ) : (
                   <span className="size-3 rounded-full bg-[var(--f-error)]" />
                 )}
-                {recording ? 'Stop recording' : 'Record myself'}
+                {recording
+                  ? 'Stop recording'
+                  : recordingPending
+                    ? 'Opening microphone…'
+                    : 'Record myself'}
+              </Button>
+              <Button
+                onClick={() =>
+                  speechBusy ? onStopSpeech() : onStartSpeech('fil-PH')
+                }
+                disabled={recording || recordingPending || Boolean(feedback)}
+                className="min-h-11 rounded-[5px] bg-[var(--f-driver-bg)] font-black text-[#10066c] hover:bg-[var(--f-blue-2)]"
+              >
+                {speechBusy ? <Square className="fill-current" /> : <Mic />}
+                {speechBusy ? 'Stop voice check' : 'Check my Tagalog'}
               </Button>
             </div>
             {recordedUrl && (
@@ -2721,6 +2934,7 @@ function ExerciseBody({
                 <Play /> Compare my recording
               </Button>
             )}
+            <SpeechAssessmentPanel state={speechState} />
             <div className="mx-auto mt-5 max-w-xl rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-left text-[#5c4a00]">
               <p className="text-xs font-black uppercase tracking-[0.1em]">
                 Syllable + stress guide
@@ -2731,9 +2945,10 @@ function ExerciseBody({
               <p className="mt-2 text-xs leading-5">{exercise.coach}</p>
             </div>
             <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
-              Your recording stays in this tab and is discarded when you leave
-              the prompt. Salita does not turn browser recognition into a
-              pronunciation score.
+              Record & compare stays in this tab. A voice check sends live audio
+              securely to Azure for transcription; Salita does not retain the
+              audio or transcript. Filipino results check understood words—not
+              accent, stress, or a native-speaker pronunciation score.
             </p>
           </div>
         </section>
@@ -2741,7 +2956,9 @@ function ExerciseBody({
           options={exercise.options ?? []}
           selected={selected}
           setSelected={setSelected}
-          disabled={Boolean(feedback)}
+          disabled={
+            Boolean(feedback) || speechBusy || recording || recordingPending
+          }
         />
         {showTranscript && <LearningHint text={exercise.note} />}
       </>
@@ -2999,6 +3216,10 @@ function ExerciseBody({
   }
 
   if (exercise.kind === 'speaking') {
+    const speechFallbackAvailable =
+      speechFallbackChosen ||
+      speechState.phase === 'error' ||
+      speechState.attemptsByLanguage['fil-PH'] >= 2;
     return (
       <>
         <div className="rounded-[16px] border border-border bg-card p-5 text-center sm:p-7">
@@ -3014,10 +3235,17 @@ function ExerciseBody({
           <p className="mt-2 text-sm text-muted-foreground">
             {exercise.english}
           </p>
+          <p className="mx-auto mt-3 max-w-lg text-xs font-bold leading-5 text-[#183f7b]">
+            Speak naturally. Salita checks whether your words were understood;
+            it does not require a native accent.
+          </p>
           <div className="mt-6 flex flex-wrap justify-center gap-3">
             <Button
               variant="outline"
               onClick={() => void playPhrase(exercise.tagalog)}
+              disabled={
+                speechBusy || recording || recordingPending || Boolean(feedback)
+              }
               className="min-h-12 rounded-[5px] font-black"
             >
               <Volume2 /> Hear model
@@ -3025,19 +3253,64 @@ function ExerciseBody({
             <Button
               variant="outline"
               onClick={() => void playPhrase(exercise.tagalog, true)}
+              disabled={
+                speechBusy || recording || recordingPending || Boolean(feedback)
+              }
               className="min-h-12 rounded-[5px] font-black"
             >
               <Pause /> Hear slowly
             </Button>
             <Button
-              onClick={runRecognition}
+              onClick={() =>
+                speechBusy && speechState.language === 'fil-PH'
+                  ? onStopSpeech()
+                  : onStartSpeech('fil-PH')
+              }
+              disabled={
+                recording ||
+                recordingPending ||
+                Boolean(feedback) ||
+                (speechBusy && speechState.language !== 'fil-PH')
+              }
               className="min-h-12 rounded-[5px] bg-[var(--f-driver-bg)] font-black text-[#10066c] hover:bg-[var(--f-blue-2)]"
             >
-              <Mic /> Speak now
+              {speechBusy && speechState.language === 'fil-PH' ? (
+                <Square className="fill-current" />
+              ) : (
+                <Mic />
+              )}
+              {speechBusy && speechState.language === 'fil-PH'
+                ? 'Stop'
+                : 'Check Tagalog'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                speechBusy && speechState.language === 'en-US'
+                  ? onStopSpeech()
+                  : onStartSpeech('en-US')
+              }
+              disabled={
+                recording ||
+                recordingPending ||
+                Boolean(feedback) ||
+                (speechBusy && speechState.language !== 'en-US')
+              }
+              className="min-h-12 rounded-[5px] font-black text-[#183f7b]"
+            >
+              {speechBusy && speechState.language === 'en-US' ? (
+                <Square className="fill-current" />
+              ) : (
+                <Languages />
+              )}
+              {speechBusy && speechState.language === 'en-US'
+                ? 'Stop'
+                : 'Check English'}
             </Button>
             <Button
               variant="outline"
               onClick={toggleRecording}
+              disabled={speechBusy || recordingPending || Boolean(feedback)}
               className="min-h-12 rounded-[5px] font-black"
             >
               {recording ? (
@@ -3045,7 +3318,11 @@ function ExerciseBody({
               ) : (
                 <span className="size-3 rounded-full bg-[var(--f-error)]" />
               )}
-              {recording ? 'Stop' : 'Record only'}
+              {recording
+                ? 'Stop'
+                : recordingPending
+                  ? 'Opening microphone…'
+                  : 'Record only'}
             </Button>
           </div>
           {voiceStatus && (
@@ -3056,9 +3333,11 @@ function ExerciseBody({
               {voiceStatus}
             </p>
           )}
-          {heard && (
-            <p className="mt-2 text-xs text-muted-foreground">
-              Recognition is a transcript, not a pronunciation score.
+          <SpeechAssessmentPanel state={speechState} />
+          {speechState.result?.language === 'en-US' && (
+            <p className="mt-2 text-xs font-bold text-[#183f7b]">
+              English is bonus pronunciation coaching. Check Tagalog to complete
+              this Tagalog speaking step.
             </p>
           )}
           {recordedUrl && (
@@ -3079,31 +3358,52 @@ function ExerciseBody({
           </div>
         </div>
 
-        <div className="mt-5">
-          <label htmlFor="spoken-answer" className="text-sm font-black">
-            What did you say?
-          </label>
-          <input
-            id="spoken-answer"
-            value={typed}
-            disabled={Boolean(feedback)}
-            onChange={(event) => setTyped(event.target.value)}
-            placeholder="Type the phrase or use speech recognition"
-            className="mt-2 min-h-12 w-full rounded-none border-0 border-b-2 border-input bg-card px-3 py-2 text-base outline-none transition focus:border-[#3174d2]"
-          />
-        </div>
-        {!feedback && (
+        {speechFallbackAvailable ? (
+          <div className="mt-5">
+            <label htmlFor="spoken-answer" className="text-sm font-black">
+              Accessible typed fallback
+            </label>
+            <input
+              id="spoken-answer"
+              value={typed}
+              disabled={Boolean(feedback)}
+              onChange={(event) => setTyped(event.target.value)}
+              placeholder="Type the Tagalog phrase if you cannot use the mic"
+              className="mt-2 min-h-12 w-full rounded-none border-0 border-b-2 border-input bg-card px-3 py-2 text-base outline-none transition focus:border-[#3174d2]"
+            />
+            <p className="mt-2 text-xs leading-5 text-muted-foreground">
+              This keeps the lesson accessible and earns practice credit, not a
+              verified speaking score.
+            </p>
+          </div>
+        ) : (
           <button
-            onClick={onSelfAssess}
+            type="button"
+            onClick={onChooseSpeechFallback}
+            disabled={
+              Boolean(feedback) || speechBusy || recording || recordingPending
+            }
             className="mt-5 min-h-11 rounded-[5px] px-2 text-sm font-black text-[#183f7b] underline decoration-2 underline-offset-4 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
-            I practiced aloud—mark this complete
+            I can’t use a microphone—show the accessible fallback
           </button>
         )}
+        {!feedback &&
+          (speechFallbackChosen ||
+            speechState.attemptsByLanguage['fil-PH'] >= 2 ||
+            speechState.phase === 'error') && (
+            <button
+              onClick={onSelfAssess}
+              className="mt-5 min-h-11 rounded-[5px] px-2 text-sm font-black text-[#183f7b] underline decoration-2 underline-offset-4 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
+            >
+              I practiced aloud—mark this complete
+            </button>
+          )}
         <div className="mt-5 flex items-start gap-2 rounded-[8px] bg-muted p-3 text-xs leading-5 text-muted-foreground">
           <LockKeyhole className="mt-0.5 size-4 shrink-0" />
-          Live recognition may use your browser’s speech service. Recordings
-          stay in this tab and are discarded when you leave the prompt.
+          Salita does not retain voice-check audio. Live audio goes securely to
+          Azure Speech for transcription. Record & compare clips remain only in
+          this tab. Mic or service failures never break your streak.
         </div>
         {showTranscript && (
           <HintPanel
