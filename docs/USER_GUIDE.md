@@ -1,248 +1,207 @@
 # Salita learner guide
 
-Salita is a daily Tagalog (Filipino) course built around useful conversations. Each unit combines sound practice, listening, reading, grammar, sentence building, and speaking. This guide explains how to use the course, what its voice tools can and cannot evaluate, and how your progress is handled.
+Salita is a gradual Tagalog (Filipino) course for English-speaking learners. The interface stays in English while the course steadily asks you to understand and produce more Filipino. It combines short lessons, cumulative recall, pronunciation coaching, spaced review, mistake repair, vocabulary games, streaks, and progress that follows your signed-in account.
 
-## Get access
+## Sign in and keep one learning record
 
-When you open the hosted Salita site, you may first see **Sign in required** and **You’re almost in**. Select **Continue with ChatGPT**, then complete the ChatGPT sign-in flow.
+The hosted Salita site uses ChatGPT sign-in. Select **Continue with ChatGPT** if the access screen appears, then use the same ChatGPT account on desktop and iPhone.
 
-- Salita does not have a separate username, password, or account page.
-- ChatGPT sign-in controls access to the hosted site. It does not sync Salita progress between browsers or devices.
-- The round profile button in Salita opens **Progress**; it is not an account-management menu.
-- If the sign-in page keeps returning, open the Salita link directly in a normal browser window, confirm that you are signed in to the intended ChatGPT account, and allow the browser cookies needed for sign-in. If access is still denied, contact the person who shared the site.
+- Salita does not create a separate password.
+- Hosted progress is keyed to the authenticated account, not to the email text shown in the interface.
+- The app saves checked answers locally first, then synchronizes them. A brief connection loss does not discard an open lesson.
+- Local development at `localhost` uses device-only storage because it does not receive the hosted identity headers.
+- If a browser already contains older device-only progress, Salita imports it automatically only when the signed-in cloud record is empty. If two nonempty histories could conflict, it asks you to **Keep account copy**, **Merge both**, or **Use device copy** and keeps a local backup first.
 
-The access screen links to [OpenAI’s Privacy Policy](https://openai.com/policies/privacy-policy).
+If another account says it has no access, the Site owner must include that account in the Site's access policy. Account sync cannot bypass the host's sign-in gate.
+
+## Install Salita on iPhone
+
+1. Open the published Salita link in **Safari** and sign in.
+2. Tap Safari's **Share** button.
+3. Choose **Add to Home Screen**. If it is not visible, scroll the action list or choose **Edit Actions**.
+4. Keep the name **Salita**, then tap **Add**.
+5. Launch Salita from its Home Screen icon. It opens in a standalone app window.
+6. When a speaking exercise first asks, allow microphone access.
+
+Use the same signed-in account on desktop and iPhone. Completed answers, lessons, XP, review schedules, mistakes, streak days, and minutes synchronize in both directions. Keep the app open until the Progress screen says **saved** when you are about to switch devices.
+
+On Android or desktop Chrome/Edge, use the browser's **Install app** or **Add to Home screen** command. Salita also includes install icons, safe-area spacing, and an offline fallback page.
 
 ## Find your way around
 
-On a wide screen, the main navigation is in the header. On a phone, it is at the bottom.
+The important navigation stays in English. On a phone it appears along the bottom.
 
-| Area         | What it is for                                                                                  |
-| ------------ | ----------------------------------------------------------------------------------------------- |
-| **Today**    | Your **Daily path**, active unit, 10-minute goal, current streak, and Azure speech status       |
-| **Learn**    | All eight units; you may choose any unit, including one you have already practiced              |
-| **Review**   | Skills that are due for spaced review                                                           |
-| **Progress** | Streaks, sessions, XP, practice calendar, skill strength, first-try accuracy, export, and reset |
+| Area         | What it is for                                                                        |
+| ------------ | ------------------------------------------------------------------------------------- |
+| **Today**    | Your next six-minute lesson, daily goal, streak, and speech-service status            |
+| **Learn**    | The complete 43-unit path and progress through each unit's six lessons                |
+| **Review**   | Due spaced repetition, **Practice mistakes**, and **Quick Match**                     |
+| **Progress** | Streaks, XP, calendar, skill strength, sync state, backups, import, and data controls |
 
-The flame count and the round profile button in the header also open **Progress**. The Salita logo returns to **Today**.
+## Follow the gradual course
 
-## Complete the daily path
+Salita contains 43 units, 258 core lessons, 301 reusable expressions, and 344 core vocabulary entries. All eight units from the original version keep their identifiers and are woven into the slower prerequisite order, so earlier work remains intact. The expanded path then builds through:
 
-1. Open **Today**.
-2. In the large **Everyday conversation** card, select **Start lesson**. After you have finished any session, this button reads **Continue lesson**. Despite that label, it starts the active unit again at **Sound lab**; Salita does not save your place inside an unfinished lesson.
-3. Work through each activity. Select an answer, then select **Check answer**.
-4. Read the feedback and select **Continue**.
-5. Continue until you reach **Lesson complete**. From there, select **Back home** or **Next unit** when another unit remains.
+1. Sounds, greetings, politeness, introductions, needs, food, directions, routines, plans, and urgent help.
+2. Predicate-first sentences, `si/sina`, `ang/ang mga`, pronouns, demonstratives, linkers, possession, questions, particles, existence, quantity, numbers, and comparison.
+3. Completed, ongoing, and contemplated aspect; actor focus; patient/object focus; wants, needs, permission, ability, states, and change.
+4. Location, movement, recipients, clock/calendar time, when-clauses, roots, person nouns, transferred-object focus, locative focus, requests, thoughts, feelings, and relative descriptions.
+5. Adverbs, connectors, causatives, agreement, doubt, derived nouns, `naka-` states, group/reciprocal actions, everyday contractions, shopping, cooking, family, school, work, travel, health, and connected stories.
 
-The **Makinig**, **Magsalita**, and **Magbasa** cards on **Today** all start the same active unit. To choose a different unit, open **Learn** and select **Start unit** or **Practice again**. Choosing a unit makes it the active unit immediately, even if you exit before finishing it.
+The course uses aspect terminology instead of forcing Tagalog verbs into English past/present/future labels. It treats focus as a system for highlighting participants, not as a simple copy of English active/passive voice.
 
-To log a finished session, a practice day, and a unit completion, continue through the **Lesson complete** screen. If you select **Exit lesson** before the end, answers you already checked may still have updated XP and review records, but Salita does not log the session or streak day as complete. Starting again creates a new activity queue; your unchecked position and any local recording are lost.
+### The six lessons in every unit
 
-The **Day N · Daily path** number counts distinct dates on which you completed practice. It is not your unit number or current streak.
+| Lesson                   | Purpose                                                                             |
+| ------------------------ | ----------------------------------------------------------------------------------- |
+| **First words & sounds** | Meet four anchor words and two expressions before the first scored recall           |
+| **Retrieve first words** | Meet four more useful words, then retrieve the four anchors from lesson one         |
+| **Build the frame**      | Meet three more expressions, notice one grammar contrast, and transform a model     |
+| **Listen and read**      | Retrieve newer words and recognize the pattern in speech and a graded passage       |
+| **Take your turn**       | Meet the final expressions, retrieve the remaining words, and produce a spoken turn |
+| **Unit checkpoint**      | Recall the unit in a changed order without relying on the introduction sequence     |
 
-## What is inside a lesson
+A miss returns later in the same lesson after unrelated prompts. Later lessons deliberately recycle earlier material before adding complexity. Completing one lesson advances to the next lesson—not straight to the next unit.
 
-A standard unit contains 11 core activities. A missed item returns later in the same session as **Try again** and may be marked **Worth another look**, so the final activity count can grow.
+## Complete today's lesson
 
-| Lesson label         | What you do                                                                                        |
-| -------------------- | -------------------------------------------------------------------------------------------------- |
-| **Sound lab**        | Study a sound model, syllables, and stress; listen, record, or run an optional Tagalog voice check |
-| **Listen**           | Play a phrase and choose its meaning                                                               |
-| **Read**             | Read a Tagalog phrase and choose its meaning                                                       |
-| **Grammar workshop** | Learn a working sentence frame and answer a form check                                             |
-| **Pattern swap**     | Change one meaningful part of a sentence frame                                                     |
-| **Build it**         | Select word tiles in a natural order                                                               |
-| **Listen closely**   | Listen to another phrase and choose its meaning                                                    |
-| **In context**       | Choose what fits a situation and social register                                                   |
-| **Speak**            | Practice the Tagalog phrase, with optional Tagalog and English voice coaching                      |
-| **Conversation**     | Choose the reply that keeps a short exchange going                                                 |
-| **Mini reading**     | Read a short passage and answer for meaning                                                        |
+1. Open **Today** and select **Start lesson** or **Continue lesson**.
+2. Read the English objective, then work through each short prompt.
+3. Use **Hint** if needed. A supported answer still earns learning credit but is not counted as a clean first try.
+4. Select **Check answer**, read the correction, and continue.
+5. Finish the completion screen so the session, minutes, and streak day are logged.
 
-Labels such as **neutral**, **polite**, **casual**, **formal**, and **Taglish** show where an expression fits. Select **Hint** when you need the model, a note, a transcript, or English support. A hint, retry, typed fallback, or self-assessed completion is recorded as supported practice rather than a first-try answer.
+Leaving before the end preserves answers already checked and their review records. It does not count the unfinished session as a completed streak day.
 
-## Hear Tagalog words and phrases
+The six small bars on each **Learn** card show lesson-level completion. Salita unlocks them in order so each new lesson can retrieve material introduced earlier. Completed lessons remain available for replay, and the unit marked **Up next** is your current path.
 
-Underlined Tagalog words are audio buttons. Select any underlined word to hear it; in **Build it**, selecting a word tile also plays that word. For a complete model, use the speaker button or **Hear model**. Use **Hear slowly** or **Slow** when you want more separation between sounds.
+## Hear every word
 
-Salita first requests its configured Filipino neural voice. If that service is unavailable, it tries a Filipino voice installed in your browser or operating system. If neither can play:
+Underlined Tagalog words are audio controls. Tap one to hear just that word. Use **Hear model**, **Slow**, or **Hear slowly** for a complete line. Quick Match includes a speaker on every vocabulary card.
 
-- In a listening activity, select **Transcript** or **Hint** to reveal the text. Salita may reveal the transcript automatically after an audio failure.
-- In other activities, use the visible Tagalog text and **Hint**.
-- If the status says **Audio is ready. Tap the word or phrase once more to play it.**, select the same control again. Browsers sometimes require a second user action before allowing sound.
+Salita requests the configured Azure Filipino neural voice directly from the tap, which is important for iPhone playback rules. If Azure is unavailable, it tries a Filipino system voice when the device has one. It never substitutes an English voice for Filipino.
 
-Check the tab and device volume if the play status changes but you hear nothing. Headphones can make the sound contrasts easier to compare.
+If you hear nothing:
 
-## Use the Sound Lab
+1. Check the device and browser-tab volume.
+2. Tap the same audio control once more; iOS may pause a newly loaded audio request.
+3. Check the **Azure speech** card on **Today**.
+4. Use **Transcript** or **Hint** so the lesson remains usable.
 
-**Sound lab** is the first activity in each standard lesson. It combines a short explanation with a model phrase and a **Syllable + stress guide**.
+## Use Filipino and English microphone coaching
 
-1. Select an underlined word, **Hear model**, or **Hear slowly**.
-2. Say the model aloud several times.
-3. Choose one of the optional practice tools:
-   - **Record myself** records only in the current browser tab. Select **Stop recording**, then **Compare my recording** to play your clip. Select **Hear model** separately to compare the two.
-   - **Check my Tagalog** sends a live microphone attempt to Azure Speech and reports what words were understood.
-4. Choose the activity’s answer and select **Check answer**. The Sound Lab voice check is coaching; it does not replace the answer choice.
+Speaking and Sound Lab exercises can run an Azure voice check. The app asks the browser for a microphone stream, requests a short-lived Speech token, and sends live audio directly to Azure. It does not store voice-check audio or transcripts in Salita progress.
 
-The Filipino result is labeled **Filipino speech match**. It may report **Words understood clearly**, **Understood—refine one part**, **Try one part again**, or **Nothing was scored**, along with what Azure heard and, when available, a word-match percentage.
+### Filipino
 
-This is not an accent score. Salita’s Filipino check compares recognized words and meaning-bearing contrasts. It does not grade a native accent, stress, glottal stops, a tapped _r_, or fine vowel quality. Use the model, your local recording, and the written sound guide for those details.
+1. Play the model.
+2. Select **Check Tagalog** or **Check my Tagalog**.
+3. Begin after the panel says **Listening…** and say the complete line.
+4. Review what Azure heard, word match, supported pronunciation metrics, and the one word that most needs another try.
 
-## Practice the Speak activity
+An exact transcript plus strong acoustic evidence can be **verified**. Recognizable words with weaker acoustic evidence are **understood** and receive supported-practice credit. A meaning-changing contrast such as `tayo/kami`, `kaliwa/kanan`, or `hindi/wala` cannot receive verified credit simply because the rest was close.
 
-The **Speak** activity offers several tools in one place:
+The scores are coaching signals, not proof of a native accent. Stress, glottal stops, vowel clarity, and the tapped `r` should also be compared with the Filipino model and written sound guide.
 
-- **Hear model** and **Hear slowly** play the Tagalog target.
-- **Check Tagalog** runs the Filipino speech match.
-- **Check English** gives optional English pronunciation coaching for the English meaning shown on the card.
-- **Record only** makes a private clip for your own comparison.
+### English
 
-### Tagalog microphone check
+**Check English** is optional pronunciation practice for the English meaning. Azure may return Overall, Accuracy, Fluency, and Complete values. English practice never substitutes for the required Tagalog turn.
 
-Select **Check Tagalog**, allow microphone access, and say the complete Tagalog phrase naturally. Begin speaking when the panel says **Listening…**. Salita stops after the phrase and shows the best scored result from your attempts; if a later attempt is weaker, the stronger earlier result can still count. Starting any voice check stops model playback and discards a current **Record myself** or **Record only** clip, so replay it first if you still want to hear it.
+### Record and compare privately
 
-When the result is understood, **Check answer** becomes available. A result of **Try one part again** does not count against you; listen to the model and try again, or use an accessible fallback.
+**Record myself** or **Record only** makes a temporary local clip. It remains only in the current tab and is discarded when replaced, when the activity changes, or when the tab closes. Recordings stop automatically after 30 seconds.
 
-### English pronunciation coaching
+### If the microphone is unavailable
 
-Select **Check English** and say the English line displayed under the Tagalog phrase. When Azure returns enough acoustic information, Salita may show **Overall**, **Accuracy**, **Fluency**, and **Complete** scores plus one word to retry with its accuracy score. The flagged word is not an audio button.
+- Allow Microphone in the browser's site settings and in iOS/macOS privacy settings.
+- Use the published HTTPS site; nonsecure remote pages cannot use microphone APIs.
+- Close another app that may own the microphone.
+- A permission request times out after 15 seconds instead of leaving the lesson stuck.
+- Use **Accessible typed fallback** or **I practiced aloud—mark this complete**. Your lesson and streak remain finishable.
 
-These numbers are coaching signals for that attempt, not a certification or a judgment of your accent. If Azure recognizes words but does not return enough acoustic evidence, Salita shows **Nothing was scored**. English coaching is optional and does not complete the Tagalog speaking step; use **Check Tagalog** or a Tagalog fallback before selecting **Check answer**.
+## Quick Match vocabulary practice
 
-## Continue without a microphone
+Open **Review** and select **Match vocabulary**, or use **Match** on any unit card.
 
-A microphone or Azure connection is never required to finish a lesson.
+1. Tap one Tagalog card and one English meaning.
+2. Use the speaker beside a Tagalog word whenever you want audio.
+3. Correct pairs remain visibly completed.
+4. A wrong pair remains available and is immediately added to **Practice mistakes**.
+5. Finishing the last pair automatically records minutes, XP, and a practice day.
 
-- Select **I can’t use a microphone—show the accessible fallback** to reveal **Accessible typed fallback** immediately.
-- The typed fallback also appears after a microphone or service error, or after two Tagalog voice-check attempts.
-- Type the displayed Tagalog phrase, then select **Check answer**.
-- You may instead practice aloud and select **I practiced aloud—mark this complete** when that option appears.
+Quick Match is tap-select rather than drag-only, so it works with touch, keyboard, and assistive technology.
 
-Fallback completion earns practice credit, not a verified speaking result. It can still complete the lesson and protect your streak.
+## Practice mistakes until they stay learned
 
-If audio is unavailable, every essential activity still has text support through the visible prompt, **Transcript**, or **Hint**. Keyboard users can move through controls with Tab and Shift+Tab and activate focused buttons with Enter or Space.
+Every first wrong answer creates or updates a durable mistake record. Open **Review** > **Practice mistakes** to work the oldest unresolved items first.
 
-## Understand streaks, XP, and progress
+- A same-session correction teaches the answer but does not erase the mistake.
+- The next clean first try moves it to **recovering**.
+- A second clean first try on a later due day marks it **recovered**.
+- Another miss reactivates it and increases its lapse count.
 
-### Streaks and the daily goal
+This prevents the common pattern where a learner recognizes a correction once, leaves the lesson, and immediately forgets it.
 
-- Finishing either a lesson or a due-review session records one practice day.
-- Multiple completed sessions on the same date still count as one streak day.
-- A current streak can end today or yesterday, so it remains visible before you practice today. Missing a full calendar day resets the current streak but not the best streak.
-- The **Daily goal** is 10 minutes. Salita adds the elapsed time of completed sessions to today’s total; the goal estimate shown on a unit card may be different.
+## Spaced review, XP, and streaks
 
-### XP and first tries
+Each phrase, vocabulary item, grammar pattern, reading, sound model, listening prompt, and speaking prompt has a stable review key.
 
-A correct first try on a skill that is currently due earns 10 XP. A correct answer with a hint, retry, typed fallback, or self-assessment earns 5 XP. A first-attempt **Words understood clearly** Tagalog result can receive first-try credit; **Understood—refine one part** and a clear result first reached on a later voice attempt count as supported practice. A wrong answer earns no XP. Practicing a review before its due date does not move its schedule forward or add XP for that item. If an audio failure automatically opens a listening transcript, that response is also treated as hint-supported.
+- Clean first try when due: 10 XP and the review interval advances.
+- Correct with a hint, retry, typed fallback, or supported voice result: 5 XP and the stage holds.
+- Wrong: 0 XP, the stage falls, the item stays due, and it enters Practice mistakes.
+- Early practice does not advance a future due date or award duplicate XP.
 
-The **First tries, last 30 sessions** percentage counts only unsupported first-try answers. It does not rise because you eventually corrected an answer after a retry.
+Intervals expand through approximately 1, 3, 7, 14, 30, and 60 days. Completing any lesson, review, mistake session, or saved Quick Match round records that calendar day. Multiple sessions on one day count as one streak day. A current streak can end today or yesterday; missing a full day resets the current streak but not the best streak.
 
-### Spaced Review
+## Sync, backups, and deletion
 
-Open **Review** to see what is **due now**. Pronunciation, grammar, reading, listening, and speaking have separate schedules, so recognizing a phrase in one mode does not mark every ability strong.
+Open **Progress** > **Your data**.
 
-Each review card shows its skill and a stage from 0 to 6. A clean first try advances the stage; a supported or retry-correct answer holds it; a miss lowers it by one stage and keeps it due. As a stage rises, successful reviews are scheduled farther apart. Review shows up to eight due cards at a time; selecting one starts up to ten due activities from that card’s unit, not only the selected card. A review ends at **Review complete** with **Back home**.
+- **Export progress** downloads a portable JSON snapshot without account IDs, device IDs, raw events, audio, or transcripts.
+- **Import backup** validates a JSON file, then offers **Merge** or **Replace**. Replace starts a new sync generation so delayed events from an old device cannot resurrect deleted history.
+- **Clear this device** removes local cached/outbox data but leaves the signed-in cloud copy intact; Salita reloads that canonical copy when reachable.
+- **Delete everywhere** appears only while signed in, requires two confirmations, and advances a server-side reset generation. It deletes synced learning history from prior generations across devices while retaining the minimal reset marker needed to reject stale offline writes.
 
-When nothing is due, Review shows **You’re caught up** or **Your review deck is ready to grow**. You can return to **Today** without advancing future reviews early.
+Never share a progress export casually; it contains learning history and review performance even though it contains no sign-in identifier.
 
-### Progress screen
+The sync indicator can report:
 
-Open **Progress** to find:
+- **saved** — the account copy includes all acknowledged events.
+- **saving** — events are being uploaded.
+- **offline** — events remain queued on this device.
+- **attention** — another device reset or replaced the account generation; reload before adding more changes.
+- **device-only** — hosted identity/database is not available, as expected in ordinary localhost development.
 
-- **Current streak**, **Best streak**, **Sessions**, and **Total XP**
-- A **Practice calendar** for the last five weeks
-- Separate strength bars for **Listening**, **Reading**, **Speaking**, **Grammar**, and **Sound & stress**
-- **First tries, last 30 sessions**
-- **Export progress** and **Reset** under **Stored on this device**
+## Privacy and cost boundaries
 
-**Sound & stress** strength comes from the spaced-review records created by Sound Lab pronunciation activities. It is not an automated accent or native-pronunciation rating.
+Salita stores only learning progress needed for the course: XP, sessions, practice dates/minutes, completed unit and lesson IDs, review records, mistake states, and recent history. It does not place email addresses in the learning tables or exports; the displayed email comes from the current hosted request.
 
-## Your data and privacy
+Azure handles synthesized curriculum text and live microphone audio. The long-lived Azure key stays server-side; the browser receives only a short-lived authorization token. Salita does not intentionally retain speech audio or recognition transcripts.
 
-### Learning progress
+The project is designed to remain on Azure's Free F0 tier unless the owner explicitly approves a change. A budget alert is useful but is not a hard spending cap. When the quota is exhausted, use text and record-only fallbacks rather than changing to a paid tier automatically.
 
-Salita stores progress in this browser’s local site storage. It is not attached to your ChatGPT account and does not automatically follow you to another browser, browser profile, device, or private/incognito session.
+## Troubleshooting
 
-- Select **Progress** > **Export progress** to download a JSON copy of the progress currently stored here. The app does not currently provide an **Import** command.
-- **Reset** clears Salita progress in this browser after you confirm **Reset all Salita progress on this device? This cannot be undone.**
-- Clearing this site’s browser data can also remove progress. Do not rely on a private/incognito window for lasting progress.
-- An exported progress file contains learning history and review data. Store or share it as you would other personal records.
+### A different account cannot open Salita
 
-If Salita reports **Progress is available for this visit, but this browser is currently blocking local storage.**, you may continue, but the current progress may not survive a reload or closed tab. Use a normal browser window and allow site storage before continuing.
+Sign in to the intended ChatGPT account in a normal browser window. If the host still says you do not have access, the Site owner must update the Site access policy; the app cannot grant itself access.
 
-### Voice and audio
+### The microphone stays on permission or connection
 
-The three voice paths handle data differently:
+Open the browser's site controls, set Microphone to Allow, reload, and try one current prompt. A permission wait stops after 15 seconds, Azure connection after 15 seconds, and an incomplete spoken phrase after 20 seconds. Nothing is scored on a timeout.
 
-| Tool                                                         | What happens                                                                                                                                        |
-| ------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Hear model**, **Hear slowly**, and underlined words        | Salita requests audio for fixed curriculum text from Azure Speech; it may fall back to a Filipino device voice                                      |
-| **Record myself** / **Record only**                          | The recording stays in the current tab for playback and is discarded when it is replaced, the activity changes, or the tab closes                   |
-| **Check my Tagalog** / **Check Tagalog** / **Check English** | The browser streams live microphone audio to Azure Speech for transcription or coaching; Salita does not retain the voice-check audio or transcript |
+### Azure hears the wrong Filipino word
 
-Salita’s server keeps the Azure resource key server-side and gives the browser a short-lived authorization token for a voice check. This guide describes Salita’s app-level storage behavior; the hosting, sign-in, browser, and Azure services remain subject to their own privacy terms, including the [Microsoft Privacy Statement](https://privacy.microsoft.com/en-us/privacystatement).
+Move closer, reduce background sound, wait for **Listening…**, and say one complete line. Replay the model slowly. Salita asks Azure for detailed Filipino alternatives and protects meaning-bearing contrasts; try again rather than accepting a visibly wrong transcript.
 
-## Troubleshoot access, audio, microphone, and progress
+### Progress seems missing
 
-### The hosted site will not open
+Confirm that the same ChatGPT account is signed in and that you are on the same published Salita hostname. Check for a yellow conflict card, then choose the correct copy. On localhost, progress is intentionally device-only. Use Export before clearing browser data.
 
-1. Open the Salita link directly, rather than inside an embedded preview.
-2. On the **You’re almost in** page, select **Continue with ChatGPT**.
-3. Confirm that the intended ChatGPT account is signed in, then reload the site.
-4. If the sign-in loop continues, allow cookies for the site or try a normal browser window. Contact the site owner if your account still cannot access it.
+### The app is offline
 
-### Tagalog audio does not play
+If a lesson was already open, continue—the event queue will retry when the connection returns. A cold offline launch shows Salita's offline page because authenticated HTML is deliberately not cached. Reconnect and tap **Try again**.
 
-1. Confirm that the browser tab and device are not muted.
-2. Select the speaker, word, or phrase again; the browser may have blocked the first automatic play attempt.
-3. Open **Today** and check the **Azure speech** card:
-   - **Checking** means the setup check has not finished.
-   - **Configured** means the key and region are present; it does not guarantee that Azure is currently reachable or within quota.
-   - **Setup needed** means Azure-backed audio and microphone coaching are not configured for this deployment.
-4. Use **Transcript** or **Hint**. If your device has a Filipino system voice, Salita tries it automatically when cloud playback fails.
-5. If rapid playback requests fail, wait a minute and try one model phrase again.
+## Learning expectations
 
-### The microphone is blocked or never starts
-
-1. Select the site-controls or lock icon beside the browser address bar.
-2. Open **Site settings** or **Permissions**, set **Microphone** to **Allow**, and reload Salita.
-3. Also check the operating system’s privacy settings and allow your browser to use the microphone.
-4. Make sure the intended input device is connected and selected.
-5. Close meeting, recording, or dictation apps that may already be using the microphone.
-6. Try the voice check again in a current browser. If the browser cannot open a microphone here, use the accessible fallback.
-
-### Azure connects but does not score the phrase
-
-- Begin speaking promptly after **Listening…** appears and say one complete phrase.
-- Move closer to the microphone, reduce background noise, and avoid playing the model through speakers while recording.
-- If you see a connection or no-complete-phrase timeout, try once more.
-- If you see **Please wait a moment before starting another voice check.**, stop restarting the check and wait before trying again.
-- **Nothing was scored** and service failures do not count as a failed voice result. Use **Record only**, **Record myself**, the typed fallback, or **I practiced aloud—mark this complete**.
-
-### Progress is missing
-
-- Return to the same browser, browser profile, and device where you practiced.
-- Leave private/incognito mode and allow local site storage.
-- Check whether browser cleanup, a privacy extension, or a cleared site-data setting removed Salita storage.
-- ChatGPT sign-in does not restore local Salita progress, and an exported JSON file cannot currently be imported in the app.
-
-## Azure Free (F0) quota behavior
-
-The **Azure speech** card reports whether speech credentials are configured; it does not show the Azure pricing tier, remaining allowance, or live service health. Some Salita deployments may use Azure’s Free (F0) tier, which is a shared resource controlled by the site owner.
-
-As of September 2026, Microsoft documents these relevant F0 limits:
-
-- F0 monthly speech-to-text and text-to-speech allowances are fixed and are not adjustable.
-- Real-time speech recognition allows one concurrent request per F0 resource.
-- Standard text-to-speech voices allow 20 transactions per 60 seconds on F0.
-
-See Microsoft’s current [Azure Speech quotas and limits](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/speech-services-quotas-and-limits) and linked pricing page for the source of truth; Microsoft can change these limits.
-
-When the shared allowance is exhausted, several learners use voice checks at once, Azure throttles a voice, or the service has a temporary capacity problem, Salita may show only a general audio or speech-service failure. It does not reliably distinguish F0 exhaustion from every other Azure failure and has no learner-visible quota meter.
-
-If that happens:
-
-1. Wait and try a single request later. Repeatedly selecting the control can trigger another short rate limit.
-2. For playback, use the automatic device voice when available, or open **Transcript** or **Hint**.
-3. For speaking, use **Record only** or **Record myself** for local comparison, or use the typed/self-assessed fallback.
-4. Continue the non-voice parts of the lesson. An Azure or microphone failure does not prevent you from completing the lesson and maintaining your streak through a fallback.
-5. If Azure-backed features remain unavailable, notify the site owner. Only the owner can inspect the shared Azure usage, wait for an allowance renewal, or change the service tier.
+The referenced textbook estimates roughly 250 hours for simple everyday conversational ability. Salita's 258 core lessons are a structured foundation, not a truthful guarantee of full fluency by themselves. For durable B1+ ability, pair the course with regular Filipino listening, extensive reading, live conversation, corrective feedback, and later open-ended Fluency Lab work.

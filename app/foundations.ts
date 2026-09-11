@@ -1,3 +1,5 @@
+import { additionalFoundations } from './course-expansion.ts';
+
 export type FoundationExample = {
   fil: string;
   en: string;
@@ -34,7 +36,7 @@ export type FoundationUnit = {
   };
 };
 
-export const foundations: Record<string, FoundationUnit> = {
+const legacyFoundations: Record<string, FoundationUnit> = {
   greetings: {
     pronunciation: {
       title: 'Five clear vowels + one “ng” sound',
@@ -439,6 +441,11 @@ export const foundations: Record<string, FoundationUnit> = {
       },
     },
   },
+};
+
+export const foundations: Record<string, FoundationUnit> = {
+  ...legacyFoundations,
+  ...additionalFoundations,
 };
 
 export function getFoundation(unitId: string): FoundationUnit {

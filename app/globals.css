@@ -47,6 +47,8 @@
 
 :root {
   /* Flamingo v3 foundations, mapped to the Salita learning experience. */
+  --font-geist-sans: Avenir, 'Avenir Next', system-ui, sans-serif;
+  --font-geist-mono: 'SFMono-Regular', Consolas, monospace;
   --f-pink-1: #ff4d95;
   --f-pink-2: #ff9dc5;
   --f-pink-3: #ffd3e9;
@@ -135,11 +137,15 @@
   }
   html {
     @apply font-sans;
+    min-height: 100%;
+    -webkit-text-size-adjust: 100%;
   }
   body {
     @apply bg-background text-foreground;
-    font-family: Avenir, var(--font-geist-sans), Arial, sans-serif;
+    min-height: 100%;
+    font-family: var(--font-geist-sans);
     line-height: 1.25;
+    padding-top: env(safe-area-inset-top);
   }
   button,
   a {
@@ -171,6 +177,11 @@
 @media (prefers-reduced-motion: no-preference) {
   button,
   a {
-    transition: color 160ms ease, background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+    transition:
+      color 160ms ease,
+      background-color 160ms ease,
+      border-color 160ms ease,
+      box-shadow 160ms ease,
+      transform 160ms ease;
   }
 }

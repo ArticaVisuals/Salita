@@ -6,11 +6,22 @@ export type SkillMode =
   | 'pronunciation';
 export type AttemptOutcome = 'first-correct' | 'retry-correct' | 'wrong';
 
+export type MistakeRecord = {
+  state: 'active' | 'recovering' | 'recovered';
+  lapseCount: number;
+  cleanSuccesses: number;
+  lastMissedAt: string;
+  lastPracticedAt: string;
+  nextPracticeDate: string;
+  source?: 'observed' | 'legacy-inferred';
+};
+
 export type ReviewRecord = {
   stage: number;
   dueDate: string;
   correct: number;
   attempts: number;
+  lastPracticedAt?: string;
 };
 
 export type LessonHistoryItem = {
@@ -18,11 +29,13 @@ export type LessonHistoryItem = {
   dateKey: string;
   completedAt: string;
   unitId: string;
+  sourceUnitIds?: string[];
   xp: number;
   firstTryCorrect: number;
   prompts: number;
   modes: SkillMode[];
-  kind?: 'lesson' | 'review';
+  kind?: 'lesson' | 'review' | 'mistakes' | 'vocab-match';
+  lessonId?: string;
 };
 
 export type LearnerProgress = {
@@ -31,9 +44,13 @@ export type LearnerProgress = {
   totalSessions: number;
   completedDays: string[];
   completedUnits: string[];
+  completedLessons: string[];
   activeUnitId: string;
+  activeLessonId: string;
+  activePathUpdatedAt: string;
   dailyMinutes: Record<string, number>;
   reviews: Record<string, ReviewRecord>;
+  mistakes: Record<string, MistakeRecord>;
   history: LessonHistoryItem[];
 };
 
@@ -85,9 +102,13 @@ export function createInitialProgress(): LearnerProgress {
     totalSessions: 0,
     completedDays: [],
     completedUnits: [],
+    completedLessons: [],
     activeUnitId: 'greetings',
+    activeLessonId: 'greetings-sounds',
+    activePathUpdatedAt: '',
     dailyMinutes: {},
     reviews: {},
+    mistakes: {},
     history: [],
   };
 }
@@ -99,9 +120,22 @@ export function parseProgress(value: string | null): LearnerProgress {
     const parsed = JSON.parse(value) as Partial<LearnerProgress>;
     if (parsed.version !== 1) return createInitialProgress();
     const history = Array.isArray(parsed.history)
-      ? parsed.history.filter(isHistoryItem).slice(-120)
+      ? parsed.history
+          .filter(isHistoryItem)
+          .sort((a, b) => a.completedAt.localeCompare(b.completedAt))
+          .slice(-120)
       : [];
 
+    const reviews = isRecord(parsed.reviews)
+      ? sanitizeReviews(parsed.reviews)
+      : {};
+    const hasExplicitMistakes = Object.prototype.hasOwnProperty.call(
+      parsed,
+      'mistakes',
+    );
+    const explicitMistakes = isRecord(parsed.mistakes)
+      ? sanitizeMistakes(parsed.mistakes)
+      : {};
     return {
       version: 1,
       xp: Number.isFinite(parsed.xp) ? Math.max(0, Number(parsed.xp)) : 0,
@@ -120,14 +154,36 @@ export function parseProgress(value: string | null): LearnerProgress {
             ),
           ]
         : [],
+      completedLessons: Array.isArray(parsed.completedLessons)
+        ? [
+            ...new Set(
+              parsed.completedLessons.filter(
+                (id): id is string =>
+                  typeof id === 'string' && id.length <= 120,
+              ),
+            ),
+          ]
+        : [],
       activeUnitId:
         typeof parsed.activeUnitId === 'string'
           ? parsed.activeUnitId
           : 'greetings',
+      activeLessonId:
+        typeof parsed.activeLessonId === 'string'
+          ? parsed.activeLessonId
+          : `${typeof parsed.activeUnitId === 'string' ? parsed.activeUnitId : 'greetings'}-sounds`,
+      activePathUpdatedAt:
+        typeof parsed.activePathUpdatedAt === 'string' &&
+        Number.isFinite(Date.parse(parsed.activePathUpdatedAt))
+          ? parsed.activePathUpdatedAt
+          : (history.at(-1)?.completedAt ?? ''),
       dailyMinutes: isRecord(parsed.dailyMinutes)
         ? sanitizeNumberRecord(parsed.dailyMinutes)
         : {},
-      reviews: isRecord(parsed.reviews) ? sanitizeReviews(parsed.reviews) : {},
+      reviews,
+      mistakes: hasExplicitMistakes
+        ? explicitMistakes
+        : inferLegacyMistakes(reviews),
       history,
     };
   } catch {
@@ -183,7 +239,15 @@ export function updateReview(
   record: ReviewRecord | undefined,
   result: AttemptOutcome,
   todayKey: string,
+  occurredAt?: string,
 ): ReviewRecord {
+  if (
+    record?.lastPracticedAt &&
+    occurredAt &&
+    occurredAt <= record.lastPracticedAt
+  ) {
+    return record;
+  }
   const previous = record ?? {
     stage: 0,
     dueDate: todayKey,
@@ -204,12 +268,135 @@ export function updateReview(
       result === 'wrong' ? todayKey : addCalendarDays(todayKey, interval),
     correct: previous.correct + (result === 'wrong' ? 0 : 1),
     attempts: previous.attempts + 1,
+    ...(occurredAt ? { lastPracticedAt: occurredAt } : {}),
+  };
+}
+
+export function updateMistake(
+  record: MistakeRecord | undefined,
+  result: AttemptOutcome,
+  dateKey: string,
+  occurredAt: string,
+): MistakeRecord | undefined {
+  if (result === 'wrong') {
+    if (record && occurredAt <= record.lastPracticedAt) return record;
+    return {
+      state: 'active',
+      lapseCount: (record?.lapseCount ?? 0) + 1,
+      cleanSuccesses: 0,
+      lastMissedAt: occurredAt,
+      lastPracticedAt: occurredAt,
+      nextPracticeDate: dateKey,
+      source: 'observed',
+    };
+  }
+  if (!record) return undefined;
+  if (occurredAt <= record.lastPracticedAt) return record;
+  if (result === 'retry-correct') {
+    return { ...record, lastPracticedAt: occurredAt };
+  }
+  if (record.state === 'active') {
+    return {
+      ...record,
+      state: 'recovering',
+      cleanSuccesses: 1,
+      lastPracticedAt: occurredAt,
+      nextPracticeDate: addCalendarDays(dateKey, 1),
+    };
+  }
+  if (record.state === 'recovering' && dateKey >= record.nextPracticeDate) {
+    return {
+      ...record,
+      state: 'recovered',
+      cleanSuccesses: Math.max(2, record.cleanSuccesses + 1),
+      lastPracticedAt: occurredAt,
+      nextPracticeDate: addCalendarDays(dateKey, 7),
+    };
+  }
+  return { ...record, lastPracticedAt: occurredAt };
+}
+
+export function isProgressEmpty(progress: LearnerProgress) {
+  return (
+    progress.xp === 0 &&
+    progress.totalSessions === 0 &&
+    progress.completedDays.length === 0 &&
+    progress.completedUnits.length === 0 &&
+    progress.completedLessons.length === 0 &&
+    Object.keys(progress.reviews).length === 0 &&
+    progress.history.length === 0
+  );
+}
+
+export function mergeLegacyProgress(
+  cloud: LearnerProgress,
+  local: LearnerProgress,
+): LearnerProgress {
+  const history = new Map(
+    [...cloud.history, ...local.history].map((item) => [item.id, item]),
+  );
+  const reviews = { ...cloud.reviews };
+  for (const [key, candidate] of Object.entries(local.reviews)) {
+    const current = reviews[key];
+    if (
+      !current ||
+      candidate.attempts > current.attempts ||
+      (candidate.attempts === current.attempts &&
+        candidate.stage > current.stage)
+    ) {
+      reviews[key] = candidate;
+    }
+  }
+  const mistakes = { ...cloud.mistakes };
+  for (const [key, candidate] of Object.entries(local.mistakes)) {
+    const current = mistakes[key];
+    if (!current || candidate.lastPracticedAt > current.lastPracticedAt) {
+      mistakes[key] = candidate;
+    }
+  }
+  const dailyMinutes = { ...cloud.dailyMinutes };
+  for (const [dateKey, minutes] of Object.entries(local.dailyMinutes)) {
+    dailyMinutes[dateKey] = Math.max(dailyMinutes[dateKey] ?? 0, minutes);
+  }
+  const useLocalPath =
+    local.activePathUpdatedAt > cloud.activePathUpdatedAt ||
+    (!cloud.activePathUpdatedAt && Boolean(local.activePathUpdatedAt));
+  return {
+    ...cloud,
+    xp: Math.max(cloud.xp, local.xp),
+    totalSessions: Math.max(
+      cloud.totalSessions,
+      local.totalSessions,
+      history.size,
+    ),
+    completedDays: [
+      ...new Set([...cloud.completedDays, ...local.completedDays]),
+    ].sort(),
+    completedUnits: [
+      ...new Set([...cloud.completedUnits, ...local.completedUnits]),
+    ],
+    completedLessons: [
+      ...new Set([...cloud.completedLessons, ...local.completedLessons]),
+    ],
+    activeUnitId: useLocalPath ? local.activeUnitId : cloud.activeUnitId,
+    activeLessonId: useLocalPath ? local.activeLessonId : cloud.activeLessonId,
+    activePathUpdatedAt: useLocalPath
+      ? local.activePathUpdatedAt
+      : cloud.activePathUpdatedAt,
+    dailyMinutes,
+    reviews,
+    mistakes,
+    history: [...history.values()]
+      .sort((a, b) => a.completedAt.localeCompare(b.completedAt))
+      .slice(-120),
   };
 }
 
 export function skillStrength(progress: LearnerProgress, mode: SkillMode) {
-  const records = Object.entries(progress.reviews).filter(([key]) =>
-    key.endsWith(`:${mode}`),
+  const records = Object.entries(progress.reviews).filter(
+    ([key]) =>
+      key.endsWith(`:${mode}`) &&
+      !(mode === 'reading' && key.includes('-vocab-')),
   );
   if (!records.length) return 0;
   const points = records.reduce((total, [, record]) => total + record.stage, 0);
@@ -218,7 +405,10 @@ export function skillStrength(progress: LearnerProgress, mode: SkillMode) {
 
 export function firstTryAccuracy(progress: LearnerProgress, mode?: SkillMode) {
   const recent = progress.history
-    .filter((item) => !mode || item.modes.includes(mode))
+    .filter(
+      (item) =>
+        item.kind !== 'vocab-match' && (!mode || item.modes.includes(mode)),
+    )
     .slice(-30);
   const prompts = recent.reduce((sum, item) => sum + item.prompts, 0);
   if (!prompts) return 0;
@@ -226,8 +416,17 @@ export function firstTryAccuracy(progress: LearnerProgress, mode?: SkillMode) {
   return Math.round((correct / prompts) * 100);
 }
 
-function isDateKey(value: unknown): value is string {
-  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value);
+export function isDateKey(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return false;
+  }
+  const [year, month, day] = value.split('-').map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day, 12));
+  return (
+    parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -260,7 +459,78 @@ function sanitizeReviews(
             dueDate: item.dueDate,
             correct: Number.isFinite(correct) ? Math.max(0, correct) : 0,
             attempts: Number.isFinite(attempts) ? Math.max(0, attempts) : 0,
+            ...(typeof item.lastPracticedAt === 'string' &&
+            Number.isFinite(Date.parse(item.lastPracticedAt))
+              ? { lastPracticedAt: item.lastPracticedAt }
+              : {}),
           },
+        ],
+      ];
+    }),
+  );
+}
+
+function sanitizeMistakes(
+  value: Record<string, unknown>,
+): Record<string, MistakeRecord> {
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, item]) => {
+      if (!isRecord(item)) return [];
+      const state = item.state;
+      const lapseCount = Number(item.lapseCount);
+      const cleanSuccesses = Number(item.cleanSuccesses);
+      if (
+        (state !== 'active' &&
+          state !== 'recovering' &&
+          state !== 'recovered') ||
+        !Number.isInteger(lapseCount) ||
+        !Number.isInteger(cleanSuccesses) ||
+        typeof item.lastMissedAt !== 'string' ||
+        typeof item.lastPracticedAt !== 'string' ||
+        !isDateKey(item.nextPracticeDate)
+      ) {
+        return [];
+      }
+      return [
+        [
+          key,
+          {
+            state,
+            lapseCount: Math.max(1, lapseCount),
+            cleanSuccesses: Math.max(0, cleanSuccesses),
+            lastMissedAt: item.lastMissedAt,
+            lastPracticedAt: item.lastPracticedAt,
+            nextPracticeDate: item.nextPracticeDate,
+            source:
+              item.source === 'legacy-inferred'
+                ? 'legacy-inferred'
+                : 'observed',
+          } satisfies MistakeRecord,
+        ],
+      ];
+    }),
+  );
+}
+
+function inferLegacyMistakes(
+  reviews: Record<string, ReviewRecord>,
+): Record<string, MistakeRecord> {
+  return Object.fromEntries(
+    Object.entries(reviews).flatMap(([key, record]) => {
+      if (record.attempts <= record.correct || record.stage > 2) return [];
+      const timestamp = `${record.dueDate}T12:00:00.000Z`;
+      return [
+        [
+          key,
+          {
+            state: 'active',
+            lapseCount: Math.max(1, record.attempts - record.correct),
+            cleanSuccesses: 0,
+            lastMissedAt: timestamp,
+            lastPracticedAt: timestamp,
+            nextPracticeDate: record.dueDate,
+            source: 'legacy-inferred',
+          } satisfies MistakeRecord,
         ],
       ];
     }),
@@ -273,10 +543,24 @@ function isHistoryItem(value: unknown): value is LessonHistoryItem {
     typeof value.id === 'string' &&
     isDateKey(value.dateKey) &&
     typeof value.completedAt === 'string' &&
+    Number.isFinite(Date.parse(value.completedAt)) &&
     typeof value.unitId === 'string' &&
-    Number.isFinite(value.xp) &&
-    Number.isFinite(value.firstTryCorrect) &&
-    Number.isFinite(value.prompts) &&
-    Array.isArray(value.modes)
+    (value.sourceUnitIds === undefined ||
+      (Array.isArray(value.sourceUnitIds) &&
+        value.sourceUnitIds.length >= 1 &&
+        value.sourceUnitIds.length <= 100 &&
+        value.sourceUnitIds.every((unitId) => typeof unitId === 'string'))) &&
+    Number.isInteger(value.xp) &&
+    Number.isInteger(value.firstTryCorrect) &&
+    Number.isInteger(value.prompts) &&
+    Array.isArray(value.modes) &&
+    value.modes.every(
+      (mode) =>
+        mode === 'listening' ||
+        mode === 'reading' ||
+        mode === 'speaking' ||
+        mode === 'grammar' ||
+        mode === 'pronunciation',
+    )
   );
 }

@@ -9,6 +9,7 @@ import {
   type AzurePronunciationScores,
   type SpeechAssessmentLanguage,
 } from './speech-assessment.ts';
+import { units } from '../app/curriculum.ts';
 
 function assess(
   id: string,
@@ -26,11 +27,25 @@ function assess(
 
 void test('every lesson has a Filipino sound check and bilingual speaking check', () => {
   const targets = listSpeechAssessmentTargets();
-  assert.equal(targets.length, 24);
+  assert.equal(targets.length, units.length * 3);
   assert.equal(
     new Set(targets.map((target) => `${target.id}:${target.language}`)).size,
-    24,
+    units.length * 3,
   );
+  for (const unit of units) {
+    assert.ok(
+      getSpeechAssessmentTarget(
+        `${unit.id}-foundation-pronunciation`,
+        'fil-PH',
+      ),
+      `${unit.id} needs a pronunciation target`,
+    );
+    const speakingId = `${unit.id}-${unit.phrases.at(-1)?.id}`;
+    if (unit.number > 8) {
+      assert.ok(getSpeechAssessmentTarget(speakingId, 'fil-PH'));
+      assert.ok(getSpeechAssessmentTarget(speakingId, 'en-US'));
+    }
+  }
   for (const target of targets) {
     assert.ok(target.reference.length > 1);
     assert.ok(target.accepted.includes(target.reference));
@@ -257,6 +272,27 @@ void test('silence is unscored and does not become a wrong answer', () => {
   const result = assess('plans-kita-bukas', '   ');
   assert.equal(result.level, 'unscored');
   assert.equal(result.matchScore, 0);
+});
+
+void test('Filipino coaching combines exact words with supported acoustic evidence', () => {
+  const target = getSpeechAssessmentTarget('greetings-pakiulit', 'fil-PH');
+  assert.ok(target);
+  const result = (pronunciation: number) =>
+    assessSpeechResult(target, {
+      transcript: target.reference,
+      confidence: 0.95,
+      pronunciation: {
+        accuracy: pronunciation,
+        fluency: pronunciation,
+        completeness: 100,
+        pronunciation,
+        prosody: null,
+        words: [],
+      },
+    });
+  assert.equal(result(90).level, 'verified');
+  assert.equal(result(70).level, 'understood');
+  assert.equal(result(40).level, 'retry');
 });
 
 void test('English pronunciation coaching uses acoustic scores without making accent absolute', () => {

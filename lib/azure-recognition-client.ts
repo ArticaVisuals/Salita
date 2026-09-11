@@ -174,7 +174,7 @@ export async function recognizeWithAzure({
     phrases.setWeight(1);
   }
 
-  if (target.kind === 'pronunciation' && target.language === 'en-US') {
+  if (target.kind === 'pronunciation' || target.language === 'fil-PH') {
     const pronunciation = new SpeechSDK.PronunciationAssessmentConfig(
       target.reference,
       SpeechSDK.PronunciationAssessmentGradingSystem.HundredMark,
@@ -219,10 +219,7 @@ export async function recognizeWithAzure({
               transcript: result.text ?? '',
               confidence: hypotheses[0]?.confidence ?? null,
               hypotheses: target.language === 'fil-PH' ? hypotheses : undefined,
-              pronunciation:
-                target.language === 'en-US'
-                  ? pronunciationScores(result)
-                  : null,
+              pronunciation: pronunciationScores(result),
             }),
           );
           return;

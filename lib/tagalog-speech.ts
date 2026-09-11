@@ -1,4 +1,4 @@
-import { units } from '../app/curriculum.ts';
+import { getUnitVocabulary, units } from '../app/curriculum.ts';
 import { foundations } from '../app/foundations.ts';
 
 export type SpeechSegment = {
@@ -56,6 +56,7 @@ function curriculumSpeechSources() {
         phrase.fil,
         ...(phrase.accepted ?? []),
       ]),
+      ...getUnitVocabulary(unit.id).map((word) => word.fil),
       unit.dialogue.line,
       unit.dialogue.reply,
       ...unit.dialogue.alternatives,

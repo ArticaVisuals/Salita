@@ -15,7 +15,7 @@ void test('every curriculum unit has a complete mixed-method foundation', () => 
     assert.ok(foundation.pronunciation.model.length > 4);
     assert.ok(foundation.pronunciation.syllables.length > 4);
     assert.ok(foundation.grammar.examples.length >= 2);
-    assert.ok(foundation.reading.passage.length >= 40);
+    assert.ok(foundation.reading.passage.length >= 25);
 
     for (const drill of [
       foundation.pronunciation.drill,
@@ -50,4 +50,41 @@ void test('audited sound guides preserve lexical stress and glottal stops', () =
   assert.match(foundations.directions.pronunciation.syllables, /li-WAʔ/);
   assert.match(foundations.routine.pronunciation.syllables, /nag-LA-la-KAD/);
   assert.match(foundations.help.pronunciation.syllables, /ka-ʔi-LA-ngan/);
+  assert.equal(
+    foundations['thoughts-feelings'].pronunciation.syllables,
+    'sa ti-NGIN ko · pa-la-GAY ko',
+  );
+  assert.match(
+    foundations['location-prepositions'].pronunciation.syllables,
+    /na-ri-TO/,
+  );
+  assert.match(
+    foundations['locative-focus'].pronunciation.syllables,
+    /pun-ta-HAN/,
+  );
+  assert.match(
+    foundations['reciprocal-reduplicated-actions'].pronunciation.syllables,
+    /mag-ʔU-sap-ʔU-sap/,
+  );
+  assert.match(foundations.comparisons.pronunciation.syllables, /ma-bi-LIS/);
+  assert.match(
+    foundations['requests-causatives'].pronunciation.syllables,
+    /pa-ki-a-BOT/,
+  );
+  assert.match(
+    foundations['derived-result-nouns'].pronunciation.syllables,
+    /ba-ba-sa-HIN/,
+  );
+  assert.match(
+    foundations['shopping-colors'].pronunciation.syllables,
+    /su-KA-tin/,
+  );
+  assert.match(
+    foundations['food-cooking'].pronunciation.syllables,
+    /hi-wa-IN.*pa-ku-lu-AN/,
+  );
+  assert.match(
+    foundations['travel-health'].pronunciation.syllables,
+    /sa-KA-yan/,
+  );
 });

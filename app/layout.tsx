@@ -1,16 +1,6 @@
 import type { Metadata, Viewport } from 'next';
-import { Geist, Geist_Mono } from 'next/font/google';
+import { PwaRegister } from '@/components/pwa-register';
 import './globals.css';
-
-const geistSans = Geist({
-  variable: '--font-geist-sans',
-  subsets: ['latin'],
-});
-
-const geistMono = Geist_Mono({
-  variable: '--font-geist-mono',
-  subsets: ['latin'],
-});
 
 export const metadata: Metadata = {
   metadataBase: new URL(
@@ -19,7 +9,13 @@ export const metadata: Metadata = {
   title: 'Salita — Learn Tagalog every day',
   description:
     'Daily Tagalog lessons in pronunciation, grammar, listening, reading, speaking, and real conversation.',
-  icons: { icon: '/favicon.svg' },
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    apple: [{ url: '/apple-touch-icon.png', sizes: '180x180' }],
+  },
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
@@ -48,6 +44,9 @@ export const metadata: Metadata = {
 };
 
 export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
   themeColor: '#ff2773',
 };
 
@@ -58,10 +57,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+      <body className="antialiased">
         {children}
+        <PwaRegister />
       </body>
     </html>
   );

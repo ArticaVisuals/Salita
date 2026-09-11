@@ -171,14 +171,28 @@ function uniquePhrases(values: string[]) {
   return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
+function automaticKeyTokens(value: string) {
+  return value
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLocaleLowerCase('fil-PH')
+    .replace(/[’‘ʼ]/gu, "'")
+    .replace(/[^\p{L}\p{N}'\s-]/gu, ' ')
+    .split(/[\s-]+/u)
+    .filter((token) => token && token !== 'po');
+}
+
 function createTargets() {
   const targets: SpeechAssessmentTarget[] = [];
 
   for (const unit of units) {
     const foundationId = `${unit.id}-foundation-pronunciation`;
-    const foundationOverride = FOUNDATION_OVERRIDES[unit.id];
     const foundationReference = foundations[unit.id]?.pronunciation.model;
-    if (foundationOverride && foundationReference) {
+    if (foundationReference) {
+      const foundationOverride = FOUNDATION_OVERRIDES[unit.id] ?? {
+        keyTokens: automaticKeyTokens(foundationReference),
+        optionalTokens: foundationReference.includes(' po') ? ['po'] : [],
+      };
       const accepted = uniquePhrases([
         foundationReference,
         ...(foundationOverride.accepted ?? []),
@@ -194,12 +208,15 @@ function createTargets() {
       });
     }
 
-    const phraseId = SPEAKING_PHRASE_IDS[unit.id];
+    const phraseId =
+      SPEAKING_PHRASE_IDS[unit.id] ?? unit.phrases.at(-1)?.id ?? '';
     const phrase = unit.phrases.find((candidate) => candidate.id === phraseId);
     if (!phrase) continue;
     const id = `${unit.id}-${phrase.id}`;
-    const override = SPEAKING_OVERRIDES[id];
-    if (!override) continue;
+    const override = SPEAKING_OVERRIDES[id] ?? {
+      keyTokens: automaticKeyTokens(phrase.fil),
+      optionalTokens: phrase.fil.includes(' po') ? ['po'] : [],
+    };
     const filipinoAccepted = uniquePhrases([
       phrase.fil,
       ...(phrase.accepted ?? []),
@@ -557,7 +574,7 @@ export function assessSpeechResult(
     level = 'understood';
   }
 
-  const pronunciation = target.language === 'en-US' ? raw.pronunciation : null;
+  const pronunciation = raw.pronunciation;
   let insufficientAcousticEvidence = false;
   if (target.kind === 'pronunciation' && target.language === 'en-US') {
     if (!pronunciation) {
@@ -571,6 +588,13 @@ export function assessSpeechResult(
         insufficientAcousticEvidence = true;
       }
     } else if (level === 'verified' && pronunciation.pronunciation < 80) {
+      level = 'understood';
+    }
+  }
+  if (target.language === 'fil-PH' && pronunciation) {
+    if (pronunciation.pronunciation < 55 || pronunciation.completeness < 65) {
+      level = 'retry';
+    } else if (level === 'verified' && pronunciation.pronunciation < 75) {
       level = 'understood';
     }
   }
@@ -603,7 +627,7 @@ export function assessSpeechResult(
                   : level === 'understood' && best.delta.extraWords.length > 0
                     ? `The main idea was understood. Compare “${best.delta.extraWords[0]}” with the model, then try once more.`
                     : target.language === 'fil-PH'
-                      ? 'This checks whether the intended words were understood, not whether you have a native accent.'
+                      ? 'Azure checks the intended Filipino words and gives pronunciation coaching; it does not require a native accent.'
                       : 'English scores are coaching signals, not a judgment of your accent.';
 
   return {

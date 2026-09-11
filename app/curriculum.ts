@@ -1,4 +1,53 @@
+import { additionalUnits, courseVocabulary } from './course-expansion.ts';
+
 export type Register = 'neutral' | 'polite' | 'casual' | 'formal' | 'Taglish';
+
+export type VocabularyItem = {
+  id: string;
+  fil: string;
+  en: string;
+  note: string;
+};
+
+export type CourseLesson = {
+  id: string;
+  unitId: string;
+  order: number;
+  title: string;
+  objective: string;
+  minutes: number;
+  kind:
+    | 'sounds'
+    | 'words'
+    | 'pattern'
+    | 'understand'
+    | 'conversation'
+    | 'checkpoint';
+};
+
+export const lessonIntroductionPlan: Record<
+  CourseLesson['kind'],
+  { vocabulary: readonly number[]; phrases: readonly number[] }
+> = {
+  sounds: { vocabulary: [0, 1, 2, 3], phrases: [0, 1] },
+  words: { vocabulary: [4, 5, 6, 7], phrases: [] },
+  pattern: { vocabulary: [], phrases: [2, 3, 4] },
+  understand: { vocabulary: [], phrases: [] },
+  conversation: { vocabulary: [], phrases: [5, 6] },
+  checkpoint: { vocabulary: [], phrases: [] },
+};
+
+export const lessonScoredPracticePlan: Record<
+  CourseLesson['kind'],
+  { vocabulary: readonly number[]; phrases: readonly number[] }
+> = {
+  sounds: { vocabulary: [], phrases: [0, 1] },
+  words: { vocabulary: [0, 1, 2, 3], phrases: [1] },
+  pattern: { vocabulary: [], phrases: [2, 3, 4] },
+  understand: { vocabulary: [4, 5], phrases: [4, 2] },
+  conversation: { vocabulary: [6, 7], phrases: [5, 6] },
+  checkpoint: { vocabulary: [], phrases: [0, 3, 5, 6] },
+};
 
 export type Phrase = {
   id: string;
@@ -33,7 +82,7 @@ export type Unit = {
   };
 };
 
-export const units: Unit[] = [
+const legacyUnits: Unit[] = [
   {
     id: 'greetings',
     number: 1,
@@ -648,6 +697,168 @@ export const units: Unit[] = [
     },
   },
 ];
+
+const courseOrder = [
+  'greetings',
+  'nominal-sentences',
+  'introductions',
+  'pronouns-demonstratives',
+  'linkers-descriptions',
+  'possession',
+  'questions-particles',
+  'comparisons',
+  'existence-quantity',
+  'needs',
+  'numbers-time',
+  'food',
+  'actor-focus',
+  'routine',
+  'object-focus',
+  'ang-ng-marking',
+  'modality-ability',
+  'plans',
+  'states-change',
+  'thoughts-feelings',
+  'relative-nominals',
+  'requests-causatives',
+  'location-prepositions',
+  'directions',
+  'recipients-benefactive',
+  'clock-calendar',
+  'when-time-clauses',
+  'word-building',
+  'i-focus',
+  'locative-focus',
+  'adverbs-connectors',
+  'causatives',
+  'agreement-doubt',
+  'derived-result-nouns',
+  'reciprocal-reduplicated-actions',
+  'spoken-filipino',
+  'shopping-colors',
+  'food-cooking',
+  'home-family',
+  'school-work',
+  'travel-health',
+  'help',
+  'stories-capstone',
+] as const;
+
+const unitById = new Map(
+  [...legacyUnits, ...additionalUnits].map((unit) => [unit.id, unit]),
+);
+
+export const units: Unit[] = courseOrder.map((unitId, index) => {
+  const unit = unitById.get(unitId);
+  if (!unit) throw new Error(`Missing curriculum unit: ${unitId}`);
+  return { ...unit, number: index + 1 };
+});
+
+const LESSON_BLUEPRINTS = [
+  {
+    kind: 'sounds',
+    title: 'First words & sounds',
+    objective:
+      'Meet four anchor words, then copy one sound model and two useful expressions.',
+  },
+  {
+    kind: 'words',
+    title: 'Retrieve first words',
+    objective:
+      'Meet four more useful words, then retrieve the four anchors from lesson one.',
+  },
+  {
+    kind: 'pattern',
+    title: 'Build the frame',
+    objective: 'Notice one grammar contrast and transform a sentence.',
+  },
+  {
+    kind: 'understand',
+    title: 'Listen and read',
+    objective: 'Recognize the same language in speech and a short reading.',
+  },
+  {
+    kind: 'conversation',
+    title: 'Take your turn',
+    objective: 'Choose a natural reply and say one complete turn aloud.',
+  },
+  {
+    kind: 'checkpoint',
+    title: 'Unit checkpoint',
+    objective: 'Recall the unit without relying on the introduction order.',
+  },
+] as const;
+
+export function getUnitLessons(unitId: string): CourseLesson[] {
+  const unit = getUnit(unitId);
+  return LESSON_BLUEPRINTS.map((lesson, index) => ({
+    ...lesson,
+    id: `${unit.id}-${lesson.kind}`,
+    unitId: unit.id,
+    order: index + 1,
+    minutes: index === 5 ? 7 : 6,
+  }));
+}
+
+export function getLesson(unitId: string, lessonId?: string) {
+  const lessons = getUnitLessons(unitId);
+  return lessons.find((lesson) => lesson.id === lessonId) ?? lessons[0];
+}
+
+export function nextLessonAfter(unitId: string, lessonId: string) {
+  const unit = getUnit(unitId);
+  const lessons = getUnitLessons(unit.id);
+  const lessonIndex = lessons.findIndex((lesson) => lesson.id === lessonId);
+  if (lessonIndex >= 0 && lessonIndex < lessons.length - 1) {
+    return { unit, lesson: lessons[lessonIndex + 1], completedUnit: false };
+  }
+  if (unit.id === units.at(-1)?.id) {
+    return {
+      unit,
+      lesson: lessons.at(-1) ?? lessons[0],
+      completedUnit: true,
+    };
+  }
+  const nextUnit = nextUnitAfter(unit.id);
+  return {
+    unit: nextUnit,
+    lesson: getUnitLessons(nextUnit.id)[0],
+    completedUnit: true,
+  };
+}
+
+export function getUnitVocabulary(unitId: string): VocabularyItem[] {
+  return courseVocabulary[unitId] ?? [];
+}
+
+export function isValidReviewKey(reviewKey: string) {
+  const separator = reviewKey.lastIndexOf(':');
+  if (separator < 1) return false;
+  const baseId = reviewKey.slice(0, separator);
+  const skill = reviewKey.slice(separator + 1);
+  if (
+    skill !== 'listening' &&
+    skill !== 'reading' &&
+    skill !== 'speaking' &&
+    skill !== 'grammar' &&
+    skill !== 'pronunciation'
+  )
+    return false;
+  for (const unit of units) {
+    if (
+      baseId === `${unit.id}-foundation-pronunciation` ||
+      baseId === `${unit.id}-foundation-grammar` ||
+      baseId === `${unit.id}-foundation-reading` ||
+      baseId === `${unit.id}-dialogue` ||
+      unit.phrases.some((phrase) => baseId === `${unit.id}-${phrase.id}`) ||
+      getUnitVocabulary(unit.id).some(
+        (word) => baseId === `${unit.id}-vocab-${word.id}`,
+      )
+    )
+      return true;
+  }
+  return false;
+}
 
 export function getUnit(unitId: string) {
   return units.find((unit) => unit.id === unitId) ?? units[0];

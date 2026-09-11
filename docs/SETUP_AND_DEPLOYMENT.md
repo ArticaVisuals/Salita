@@ -4,17 +4,17 @@ This guide is for developers who want to run Salita locally or deploy a private 
 
 ## Architecture at a glance
 
-Salita is a React 19 application built with vinext and Vite for the Cloudflare Workers runtime. The repository uses npm and pins its dependency graph in `package-lock.json`. The production build is server-backed because the two speech API routes need server-side runtime values.
+Salita is a React 19 application built with vinext and Vite for the Cloudflare Workers runtime. The repository uses npm and pins its dependency graph in `package-lock.json`. The production build is server-backed because the speech routes need server-side runtime values and account progress uses managed D1 storage.
 
 The speech features have three distinct paths:
 
-| Feature                   | Locale   | What Salita does                                                                                                                                                                                                                                                                            |
-| ------------------------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Listen to Filipino        | `fil-PH` | `GET /api/speech` sends allowlisted curriculum text to Azure Text to Speech using a server-side key and returns cacheable MP3 audio.                                                                                                                                                        |
-| Check Filipino speech     | `fil-PH` | The browser obtains a short-lived token from `POST /api/speech/token`, streams microphone audio directly to Azure Speech to Text, then Salita compares recognition hypotheses with accepted phrases and key words. This is a **speech match**, not an accent or native-pronunciation score. |
-| Optional English coaching | `en-US`  | The browser uses Azure Speech to Text with Azure Pronunciation Assessment and displays acoustic accuracy, fluency, completeness, overall pronunciation, and word-level feedback when Azure returns them.                                                                                    |
+| Feature                   | Locale   | What Salita does                                                                                                                                                                                                                                                      |
+| ------------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Listen to Filipino        | `fil-PH` | `GET /api/speech` sends allowlisted curriculum text to Azure Text to Speech using a server-side key and returns cacheable MP3 audio.                                                                                                                                  |
+| Check Filipino speech     | `fil-PH` | The browser obtains a short-lived token from `POST /api/speech/token`, streams microphone audio directly to Azure, then combines detailed recognition hypotheses with supported Pronunciation Assessment evidence. This is coaching, not a native-accent requirement. |
+| Optional English coaching | `en-US`  | The browser uses Azure Speech to Text with Azure Pronunciation Assessment and displays acoustic accuracy, fluency, completeness, overall pronunciation, and word-level feedback when Azure returns them.                                                              |
 
-The implementation only applies `PronunciationAssessmentConfig` to the English path. Do not describe the Filipino result as Azure Pronunciation Assessment, even if Azure's product support changes later. Microsoft's current [language and voice support](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support) page lists `fil-PH` speech recognition and the two Filipino voices used here, while its Pronunciation Assessment locale table does not list `fil-PH`.
+The implementation applies `PronunciationAssessmentConfig` to both supported learning locales. Microsoft's current [language and voice support](https://learn.microsoft.com/en-us/azure/ai-services/speech-service/language-support) page lists `fil-PH` for Speech to Text and Pronunciation Assessment, plus the Filipino voices used here. Recheck that source before changing locales or interpreting metrics.
 
 The Azure resource key never belongs in browser code. The token route exchanges it for a token advertised by Salita as valid for about nine minutes. That temporary token can authorize Speech-resource operations during its lifetime, so the site and the token endpoint must be protected by authentication and abuse controls.
 
@@ -97,7 +97,7 @@ cp .env.example .env.local
 
 `npm ci` installs exactly what is recorded in `package-lock.json` and fails if the manifest and lockfile disagree. Use `npm install` only when intentionally changing dependencies and reviewing the resulting lockfile change.
 
-The app can run without Azure values. Curriculum, progress stored in the browser, and non-cloud practice paths remain available, but Azure Filipino audio and Azure microphone checks report that speech is not configured.
+The app can run without Azure values. Curriculum, device-only progress, and non-cloud practice paths remain available, but Azure Filipino audio and Azure microphone checks report that speech is not configured. Hosted account sync additionally requires the managed `DB` binding and trusted `oai-authenticated-user-id` request header supplied by the Site.
 
 ## Environment variables
 
@@ -120,6 +120,30 @@ NEXT_PUBLIC_APP_URL=http://localhost:3000
 The routes first read Cloudflare runtime bindings and then fall back to `process.env` for compatible local execution. Restart the development server after changing `.env.local`.
 
 For production, configure the same names in the hosting platform's runtime settings. Store `AZURE_SPEECH_KEY` as an encrypted secret, not a plaintext build variable. Do not place values in `.openai/hosting.json`, `vite.config.ts`, a Wrangler configuration committed to Git, GitHub Actions YAML, or client-side code.
+
+## Progress database and identity
+
+The hosted app uses an append-only D1 event log plus a materialized learner snapshot. `.openai/hosting.json` names the logical managed binding as `DB`; never paste a physical database ID into the repository.
+
+The checked-in source of truth is:
+
+- `db/schema.ts` for the three Drizzle table declarations.
+- `drizzle/0000_sticky_red_skull.sql` for the reviewed initial migration, constraints, partial session index, generation guards, and conflict triggers.
+- `lib/progress-events.ts` for the pure event protocol and reducer.
+- `lib/progress-d1.ts` for idempotent inserts, materialization, import, and reset generations.
+- `app/api/progress` for bootstrap/sync, import, export, and delete routes.
+
+When intentionally changing the schema:
+
+```bash
+npm run db:generate
+```
+
+Review the generated SQL. Drizzle does not generate Salita's hand-reviewed SQLite checks and triggers automatically, so a maintainer must preserve or add those safeguards in a new append-only migration. Never rewrite or delete a migration that has already been applied. Smoke-test a new migration against SQLite/D1 before publishing.
+
+The Site injects `oai-authenticated-user-id`; Salita treats that opaque value as the sole ownership key and never trusts email for authorization. The displayed email is request metadata only and is not stored in learning tables or exports. A separately hosted deployment must have a trusted authentication proxy that strips any client-supplied copies of these headers and injects its own. Without that trust boundary, leave account sync unavailable rather than accepting forgeable identity headers.
+
+Local `npm run dev` normally receives no hosted identity and therefore uses `salita-progress-v1` device-only storage. Test true cross-device sync only on an authenticated preview or production Site with a managed D1 binding.
 
 ## Create an Azure Speech Free (F0) resource
 
@@ -156,15 +180,16 @@ Open the local URL printed by the command. When prompted for microphone access, 
 
 ### Repository commands
 
-| Command             | Purpose                                                                                                                                         |
-| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run dev`       | Run the vinext/Vite development server with the local Cloudflare runtime.                                                                       |
-| `npm test`          | Run the Node test suite in `app/*.test.ts` and `lib/*.test.ts`. Tests do not need a real Azure credential.                                      |
-| `npm run lint`      | Run oxlint.                                                                                                                                     |
-| `npm run typecheck` | Run TypeScript without emitting files.                                                                                                          |
-| `npm run build`     | Produce the Cloudflare-compatible production build under ignored `dist/`.                                                                       |
-| `npm run start`     | Run the already-built Worker locally with Wrangler. This is a local production-like check, not a deployment command. Run `npm run build` first. |
-| `npm run format`    | Apply oxfmt. It can rewrite files, so review the diff before committing.                                                                        |
+| Command               | Purpose                                                                                                                                           |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run dev`         | Run the vinext/Vite development server with the local Cloudflare runtime.                                                                         |
+| `npm run db:generate` | Generate an append-only Drizzle migration after an intentional schema change; review and restore Salita's custom constraints/triggers before use. |
+| `npm test`            | Run the Node test suite in `app/*.test.ts` and `lib/*.test.ts`. Tests do not need a real Azure credential.                                        |
+| `npm run lint`        | Run oxlint.                                                                                                                                       |
+| `npm run typecheck`   | Run TypeScript without emitting files.                                                                                                            |
+| `npm run build`       | Produce the Cloudflare-compatible production build under ignored `dist/`.                                                                         |
+| `npm run start`       | Run the already-built Worker locally with Wrangler. This is a local production-like check, not a deployment command. Run `npm run build` first.   |
+| `npm run format`      | Apply oxfmt. It can rewrite files, so review the diff before committing.                                                                          |
 
 Before a pull request or deployment, run:
 
@@ -181,7 +206,7 @@ Use a test resource, an authenticated test deployment, or local development. Do 
 
 1. Load the app and confirm the Azure status card reports a configured provider and Filipino voice. `GET /api/speech` with no query parameters returns only configuration status; it never returns the key.
 2. Play a bundled Filipino phrase at normal and slow speed.
-3. Run a Filipino voice check. Confirm the UI labels it **Filipino speech match** and reports transcript/meaning matching rather than pronunciation subscores.
+3. Run a Filipino voice check. Confirm the UI reports the transcript, word match, and supported pronunciation evidence without presenting a native accent as the goal.
 4. Run the optional English check. Confirm acoustic Pronunciation Assessment fields appear when Azure returns them; an unscored result is a valid failure mode when acoustic evidence is insufficient.
 5. Deny microphone permission and confirm the accessible practice-aloud or record-and-compare fallback remains usable.
 6. Repeat through the authenticated HTTPS production hostname. Microphone APIs commonly fail on insecure non-local origins.
@@ -211,9 +236,10 @@ For the managed Sites path:
 
 1. Validate the exact source revision with the four commands above.
 2. Configure `AZURE_SPEECH_KEY`, `AZURE_SPEECH_REGION`, and optionally `AZURE_SPEECH_VOICE` through the Site operator's managed runtime-value controls. If encrypted secret controls are not available, stop rather than baking the key into the source or build archive.
-3. Publish through the existing Sites workflow and keep the access policy owner-only or explicitly restricted to intended authenticated users.
-4. Verify the resolved access policy before and after deployment. Treat missing or ambiguous access information as **not private**.
-5. Test the deployed app while signed in, then confirm a signed-out/private browsing request is blocked before it reaches the app.
+3. Provision/apply the managed D1 binding and checked-in migration through the Sites workflow; verify `DB` is available before enabling sync.
+4. Publish through the existing Sites workflow and keep the access policy owner-only or explicitly restricted to intended authenticated users.
+5. Verify the resolved access policy before and after deployment. Treat missing or ambiguous access information as **not private**.
+6. Test the deployed app while signed in, then confirm a signed-out/private browsing request is blocked before it reaches the app.
 
 Do not print or document the private Site URL. Do not copy a Sites project identifier from one fork to another. A new fork owner should create a new Site or have an authorized operator rebind it through the managed workflow.
 
@@ -233,11 +259,13 @@ Direct Cloudflare deployment is an advanced alternative to managed Sites:
 
 - Signed-out requests cannot load the app or either speech route.
 - Signed-in users can synthesize one allowlisted Filipino phrase.
-- Filipino Speech-to-Text and English Pronunciation Assessment both use the intended locale.
+- Filipino and English recognition/Pronunciation Assessment use the intended locale.
 - The key and issued token are absent from HTML, JavaScript bundles, analytics, application logs, error trackers, and browser-persisted storage.
 - The browser talks directly to Azure only after a signed-in request obtains a temporary token.
 - Azure usage metrics and budget alerts are active.
-- Clearing browser data removes local progress as expected; Salita has no server database for learner progress.
+- A completed test event appears on a second signed-in device; duplicate sync does not add XP or sessions twice.
+- Export contains no account key, event/device ID, email, audio, or transcript.
+- A reset advances the sync generation and an old queued event receives a stale-generation conflict.
 
 ## Security, privacy, and cost safeguards
 
@@ -247,7 +275,7 @@ Direct Cloudflare deployment is an advanced alternative to managed Sites:
 - Text to Speech accepts only normalized text already present in the bundled curriculum; the endpoint is not an arbitrary synthesis proxy.
 - Synthesized curriculum audio is cached to reduce repeat latency and Azure usage.
 - The token route accepts only known exercise/language combinations, checks browser same-origin requests, sends `no-store` responses, and applies a small best-effort local rate guard.
-- Salita does not intentionally persist microphone-check audio or transcripts. Record-and-compare clips remain in the current tab, and learner progress is stored in that browser.
+- Salita does not intentionally persist microphone-check audio or transcripts. Record-and-compare clips remain in the current tab. Learning events are queued locally and materialized into the signed-in learner's D1 snapshot.
 
 These controls do not eliminate third-party processing: microphone checks stream audio from the browser to Azure. Review Microsoft's current data handling, retention, residency, and compliance terms before allowing real learners to use the feature, and disclose that processing in the application's privacy notice.
 
@@ -287,11 +315,12 @@ Treat a committed, logged, screenshotted, or messaged key as compromised even if
 | The microphone button is blocked                        | Use `localhost` or HTTPS, grant permission for the exact origin, connect a microphone, and close other recording apps. The accessible fallback should remain available.                                      |
 | The token route returns 403                             | The app and API request are crossing origins or a proxy is presenting the wrong public origin. Serve them from the same authenticated origin; do not weaken the check to enable cross-origin token issuance. |
 | The speech route returns `UNKNOWN_TEXT`                 | The requested text is not in the bundled curriculum allowlist. Add curriculum content through the normal code and tests; do not turn the route into an open TTS proxy.                                       |
-| Filipino has no accuracy/fluency pronunciation scores   | This is intentional. Salita's Filipino path uses `fil-PH` recognition plus transcript/meaning matching and is labeled **speech match**.                                                                      |
+| Filipino returns words but no pronunciation scores      | Confirm the deployed Speech SDK/resource supports current `fil-PH` Pronunciation Assessment. Keep transcript coaching usable and never invent missing acoustic evidence.                                     |
 | English is recognized but marked unscored               | Azure did not return sufficient acoustic Pronunciation Assessment evidence. Retry in a quieter environment; do not manufacture a score from the transcript.                                                  |
 | Local speech works but hosted speech does not           | Local `.env.local` is ignored by Git and is not uploaded. Configure the hosted runtime values separately and verify private access before testing.                                                           |
 | A signed-out user can reach a speech endpoint           | The hosting access policy is incomplete or an alternate hostname bypasses it. Disable the deployment or remove the Azure secret until every route is protected.                                              |
-| Progress disappeared                                    | Progress is browser-local. Clearing site data, changing browser/profile/hostname, or using private browsing creates a separate empty state.                                                                  |
+| Progress appears on one device only                     | Confirm the same authenticated account and hostname, the managed `DB` binding, and `/api/progress` response. Localhost is intentionally device-only.                                                         |
+| Sync reports `STALE_GENERATION`                         | Another device reset or replaced the account copy. Preserve/export any local work, reload canonical progress, and do not remove the generation guard.                                                        |
 
 ## Release checklist
 
@@ -301,6 +330,8 @@ Treat a committed, logged, screenshotted, or messaged key as compromised even if
 - [ ] The production key is stored as an encrypted runtime secret.
 - [ ] Authentication covers the app, both API routes, and every reachable hostname.
 - [ ] A distributed token-route rate limit and Azure budget alerts are active.
-- [ ] Filipino feedback is labeled speech match; English alone uses the app's Pronunciation Assessment path.
+- [ ] The reviewed D1 migration applies cleanly and duplicate/concurrent event checks pass.
+- [ ] Filipino and English feedback combine transcript matching with supported Pronunciation Assessment evidence without requiring a native accent.
+- [ ] Cross-device sync, legacy migration, export/import, device clear, and delete-everywhere reset are tested with non-production learner data.
 - [ ] Signed-in and signed-out smoke tests pass over HTTPS.
 - [ ] Monitoring contains no speech payloads, keys, or temporary tokens.

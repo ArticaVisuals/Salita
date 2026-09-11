@@ -144,6 +144,15 @@ export function useSpeechAssessment({
         }));
         return;
       }
+      if (!window.isSecureContext) {
+        setState((current) => ({
+          ...current,
+          phase: 'error',
+          error:
+            'Microphone coaching needs a secure HTTPS connection. Open the published Salita site instead of an insecure preview.',
+        }));
+        return;
+      }
 
       attemptIdRef.current += 1;
       const attemptId = attemptIdRef.current;
@@ -164,7 +173,7 @@ export function useSpeechAssessment({
 
       const controller = new AbortController();
       abortRef.current = controller;
-      let timedOut: 'connection' | 'speech' | null = null;
+      let timedOut: 'permission' | 'connection' | 'speech' | null = null;
       let listeningStarted = false;
       const armTimeout = (
         stage: Exclude<typeof timedOut, null>,
@@ -178,7 +187,8 @@ export function useSpeechAssessment({
       };
 
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
+        armTimeout('permission', 15_000);
+        const mediaRequest = navigator.mediaDevices.getUserMedia({
           audio: {
             autoGainControl: true,
             channelCount: 1,
@@ -186,6 +196,22 @@ export function useSpeechAssessment({
             noiseSuppression: true,
           },
         });
+        void mediaRequest.then((lateStream) => {
+          if (controller.signal.aborted || attemptId !== attemptIdRef.current) {
+            lateStream.getTracks().forEach((track) => track.stop());
+          }
+        });
+        const stream = await Promise.race([
+          mediaRequest,
+          new Promise<never>((_, reject) => {
+            controller.signal.addEventListener(
+              'abort',
+              () =>
+                reject(new DOMException('Voice check stopped.', 'AbortError')),
+              { once: true },
+            );
+          }),
+        ]);
         if (attemptId !== attemptIdRef.current || controller.signal.aborted) {
           stream.getTracks().forEach((track) => track.stop());
           return;
@@ -250,9 +276,11 @@ export function useSpeechAssessment({
             result: null,
             retainedBest: false,
             error:
-              timedOut === 'connection'
-                ? 'Azure took too long to connect. Try again or use Record & compare; nothing was scored.'
-                : 'No complete phrase arrived in time. Move closer to the microphone and try once more; nothing was scored.',
+              timedOut === 'permission'
+                ? 'Microphone permission took too long. Check this site’s microphone setting, then try again; nothing was scored.'
+                : timedOut === 'connection'
+                  ? 'Azure took too long to connect. Try again or use Record & compare; nothing was scored.'
+                  : 'No complete phrase arrived in time. Move closer to the microphone and try once more; nothing was scored.',
           }));
           return;
         }
@@ -277,7 +305,14 @@ export function useSpeechAssessment({
     [cleanUp, onBeforeStart],
   );
 
-  useEffect(() => cleanUp, [cleanUp]);
+  useEffect(() => {
+    const pageHide = () => cleanUp();
+    window.addEventListener('pagehide', pageHide);
+    return () => {
+      window.removeEventListener('pagehide', pageHide);
+      cleanUp();
+    };
+  }, [cleanUp]);
 
   const busy = useMemo(
     () =>

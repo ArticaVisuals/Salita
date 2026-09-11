@@ -9,6 +9,8 @@ import {
   CheckCircle2,
   ChevronRight,
   CircleHelp,
+  Cloud,
+  CloudOff,
   Clock3,
   Download,
   Flame,
@@ -24,8 +26,10 @@ import {
   Sparkles,
   Square,
   Star,
+  Smartphone,
   Trash2,
   TriangleAlert,
+  Upload,
   UserRound,
   Volume2,
   X,
@@ -40,34 +44,40 @@ import {
   type SpeechSessionState,
 } from '@/hooks/use-speech-assessment';
 import {
+  getLesson,
   getUnit,
-  nextUnitAfter,
+  getUnitLessons,
+  getUnitVocabulary,
+  lessonIntroductionPlan,
+  lessonScoredPracticePlan,
+  nextLessonAfter,
+  type CourseLesson,
   type Phrase,
   type Register,
   type Unit,
+  type VocabularyItem,
   units,
 } from './curriculum';
 import { getFoundation, type FoundationExample } from './foundations';
 import {
-  STORAGE_KEY,
   addCalendarDays,
-  createInitialProgress,
   deriveStreaks,
   firstTryAccuracy,
-  isReviewDue,
   localDateKey,
-  parseProgress,
   scoreAttempt,
   skillStrength,
-  updateReview,
+  type AttemptOutcome,
   type LearnerProgress,
   type SkillMode,
 } from '@/lib/progress';
+import { useSyncedProgress } from '@/hooks/use-synced-progress';
+import type { ActivityKind } from '@/lib/progress-events';
 import { segmentTagalogText } from '@/lib/tagalog-speech';
 import type { SpeechAssessmentLanguage } from '@/lib/speech-assessment';
 
 type View = 'today' | 'learn' | 'review' | 'progress';
 type ExerciseKind =
+  | 'vocabulary'
   | 'pronunciation'
   | 'grammar'
   | 'passage'
@@ -104,6 +114,8 @@ type Exercise = {
   syllables?: string;
   coach?: string;
   translation?: string;
+  vocabularyItems?: VocabularyItem[];
+  phraseItems?: Phrase[];
   isRetry?: boolean;
 };
 
@@ -127,12 +139,18 @@ type ModelContextLike = {
   ) => void | Promise<void>;
 };
 
+function elapsedMinutesSince(startedAt: number) {
+  return Math.max(1, Math.round((Date.now() - startedAt) / 60_000));
+}
+
 const NAV_ITEMS: { id: View; label: string; icon: typeof Sparkles }[] = [
   { id: 'today', label: 'Today', icon: Sparkles },
   { id: 'learn', label: 'Learn', icon: BookOpen },
   { id: 'review', label: 'Review', icon: RefreshCcw },
   { id: 'progress', label: 'Progress', icon: BarChart3 },
 ];
+
+const COURSE_EXPANSION_NOTICE_KEY = 'salita-course-expansion-2026-v2-seen';
 
 const REGISTER_STYLES: Record<Register, string> = {
   neutral: 'bg-[var(--f-cyan-1)] text-[#005c83]',
@@ -171,6 +189,21 @@ function rotateOptions(correct: string, distractors: string[], offset: number) {
   ].slice(0, 3);
   const turn = offset % unique.length;
   return [...unique.slice(turn), ...unique.slice(0, turn)];
+}
+
+function seededScore(value: string) {
+  let score = 2166136261;
+  for (const character of value) {
+    score ^= character.codePointAt(0) ?? 0;
+    score = Math.imul(score, 16777619);
+  }
+  return score >>> 0;
+}
+
+function seededShuffle<T extends { id: string }>(items: T[], seed: string) {
+  return [...items].sort(
+    (a, b) => seededScore(`${seed}:${a.id}`) - seededScore(`${seed}:${b.id}`),
+  );
 }
 
 function phraseExercise(
@@ -216,6 +249,109 @@ function phraseExercise(
     patternFrame: kind === 'pattern' ? unit.pattern.frame : undefined,
     patternTransform: kind === 'pattern' ? unit.pattern.transform : undefined,
     soundFocus: kind === 'speaking' ? unit.soundFocus : undefined,
+  };
+}
+
+function vocabularyExercise(
+  unit: Unit,
+  word: VocabularyItem,
+  index: number,
+): Exercise {
+  const others = getUnitVocabulary(unit.id).filter(
+    (item) => item.id !== word.id,
+  );
+  const offset = index % Math.max(1, others.length);
+  const distractors = [...others.slice(offset), ...others.slice(0, offset)].map(
+    (item) => item.en,
+  );
+  return {
+    instanceId: `${unit.id}-vocab-${word.id}-reading`,
+    baseId: `${unit.id}-vocab-${word.id}`,
+    kind: 'reading',
+    skill: 'reading',
+    eyebrow: 'Remember the word',
+    prompt: 'Choose the meaning of this word.',
+    tagalog: word.fil,
+    english: word.en,
+    correct: word.en,
+    options: rotateOptions(word.en, distractors, index),
+    accepted: [word.en],
+    note: word.note,
+    register: 'neutral',
+  };
+}
+
+function vocabularyIntroductionExercise(
+  unit: Unit,
+  words: VocabularyItem[],
+  group: string,
+): Exercise {
+  return {
+    instanceId: `${unit.id}-vocab-intro-${group}`,
+    baseId: `${unit.id}-vocab-intro-${group}`,
+    kind: 'vocabulary',
+    skill: 'reading',
+    eyebrow: 'Meet the words',
+    prompt: 'Hear these words before you retrieve them.',
+    tagalog: words.map((word) => word.fil).join('. '),
+    english: words.map((word) => word.en).join(' · '),
+    correct: '',
+    accepted: [],
+    note: 'Listen, read the meaning, and say each word once. Later prompts will ask you to remember them.',
+    register: 'neutral',
+    vocabularyItems: words,
+  };
+}
+
+function phraseIntroductionExercise(
+  unit: Unit,
+  phraseIndexes: number[],
+  group: string,
+): Exercise {
+  const phrases = phraseIndexes
+    .map((index) => unit.phrases[index])
+    .filter((phrase): phrase is Phrase => Boolean(phrase));
+  return {
+    instanceId: `${unit.id}-phrase-intro-${group}`,
+    baseId: `${unit.id}-phrase-intro-${group}`,
+    kind: 'vocabulary',
+    skill: 'listening',
+    eyebrow: 'Meet the expressions',
+    prompt: 'Hear these expressions before you retrieve them.',
+    tagalog: phrases.map((phrase) => phrase.fil).join(' '),
+    english: phrases.map((phrase) => phrase.en).join(' · '),
+    correct: '',
+    accepted: [],
+    note: 'Listen, read each meaning, and repeat once. The next prompts ask you to recognize and produce them.',
+    register: 'neutral',
+    phraseItems: phrases,
+  };
+}
+
+function dialogueIntroductionExercise(unit: Unit): Exercise {
+  const reading = getFoundation(unit.id).reading;
+  return {
+    instanceId: `${unit.id}-dialogue-intro`,
+    baseId: `${unit.id}-dialogue-intro`,
+    kind: 'vocabulary',
+    skill: 'reading',
+    eyebrow: 'Preview the exchange',
+    prompt: 'Read and hear this short exchange before answering from it.',
+    tagalog: reading.passage,
+    english: reading.translation,
+    correct: '',
+    accepted: [],
+    note: 'Listen once for the whole meaning, then tap any unfamiliar word before the reading check.',
+    register: 'neutral',
+    phraseItems: [
+      {
+        id: `${unit.id}-dialogue-preview`,
+        fil: reading.passage,
+        en: reading.translation,
+        note: reading.drill.note,
+        register: 'neutral',
+      },
+    ],
   };
 }
 
@@ -309,90 +445,193 @@ function passageExercise(unit: Unit): Exercise {
   };
 }
 
-function buildLesson(unit: Unit): Exercise[] {
-  return [
-    foundationExercise(unit, 'pronunciation'),
+function buildLesson(unit: Unit, lesson: CourseLesson): Exercise[] {
+  const vocabulary = getUnitVocabulary(unit.id);
+  const scored = lessonScoredPracticePlan;
+  const word = (index: number) =>
+    vocabularyExercise(unit, vocabulary[index % vocabulary.length], index);
+  const listening = (phraseIndex: number, eyebrow = 'Listen') =>
     phraseExercise(
       unit,
-      0,
+      phraseIndex,
       'listening',
       'listening',
-      'Listen',
+      eyebrow,
       'Play the phrase, then choose what it means.',
-    ),
+    );
+  const reading = (phraseIndex: number, eyebrow = 'Read') =>
     phraseExercise(
       unit,
-      1,
+      phraseIndex,
       'reading',
       'reading',
-      'Read',
+      eyebrow,
       'Choose the best meaning.',
-    ),
-    foundationExercise(unit, 'grammar'),
+    );
+  const arrange = (phraseIndex: number) =>
     phraseExercise(
       unit,
-      2,
-      'pattern',
-      'grammar',
-      'Pattern swap',
-      'Notice the frame, then choose the Tagalog expression.',
-    ),
-    phraseExercise(
-      unit,
-      3,
+      phraseIndex,
       'arrange',
       'reading',
       'Build it',
       'Put the words in a natural order.',
-    ),
+    );
+  const pattern = (phraseIndex: number) =>
     phraseExercise(
       unit,
-      4,
-      'listening',
-      'listening',
-      'Listen closely',
-      'Play the phrase, then choose what it means.',
-    ),
+      phraseIndex,
+      'pattern',
+      'grammar',
+      'Transform it',
+      'Use the frame, then choose the natural Tagalog expression.',
+    );
+  const context = (phraseIndex: number) =>
     phraseExercise(
       unit,
-      5,
+      phraseIndex,
       'context',
       'reading',
       'In context',
       'Choose what you would say in this situation.',
-    ),
+    );
+  const speaking = (phraseIndex: number) =>
     phraseExercise(
       unit,
-      6,
+      phraseIndex,
       'speaking',
       'speaking',
       'Speak',
       'Listen, then say the phrase aloud.',
-    ),
-    dialogueExercise(unit),
-    passageExercise(unit),
-  ];
+    );
+
+  const paths: Record<CourseLesson['kind'], Exercise[]> = {
+    sounds: [
+      vocabularyIntroductionExercise(
+        unit,
+        lessonIntroductionPlan.sounds.vocabulary.map(
+          (index) => vocabulary[index],
+        ),
+        'first',
+      ),
+      phraseIntroductionExercise(
+        unit,
+        [...lessonIntroductionPlan.sounds.phrases],
+        'first',
+      ),
+      foundationExercise(unit, 'pronunciation'),
+      listening(scored.sounds.phrases[0]),
+      reading(scored.sounds.phrases[1]),
+      speaking(scored.sounds.phrases[0]),
+    ],
+    words: [
+      vocabularyIntroductionExercise(
+        unit,
+        lessonIntroductionPlan.words.vocabulary.map(
+          (index) => vocabulary[index],
+        ),
+        'second',
+      ),
+      ...scored.words.vocabulary.map(word),
+      listening(scored.words.phrases[0]),
+    ],
+    pattern: [
+      phraseIntroductionExercise(
+        unit,
+        [...lessonIntroductionPlan.pattern.phrases],
+        'pattern',
+      ),
+      foundationExercise(unit, 'grammar'),
+      pattern(scored.pattern.phrases[0]),
+      arrange(scored.pattern.phrases[1]),
+      context(scored.pattern.phrases[2]),
+    ],
+    understand: [
+      ...scored.understand.vocabulary.map(word),
+      listening(scored.understand.phrases[0]),
+      dialogueIntroductionExercise(unit),
+      passageExercise(unit),
+      arrange(scored.understand.phrases[1]),
+    ],
+    conversation: [
+      phraseIntroductionExercise(
+        unit,
+        [...lessonIntroductionPlan.conversation.phrases],
+        'conversation',
+      ),
+      ...scored.conversation.vocabulary.map(word),
+      dialogueExercise(unit),
+      context(scored.conversation.phrases[0]),
+      speaking(scored.conversation.phrases[1]),
+    ],
+    checkpoint: [
+      listening(scored.checkpoint.phrases[0], 'Cumulative listening'),
+      foundationExercise(unit, 'grammar'),
+      arrange(scored.checkpoint.phrases[1]),
+      context(scored.checkpoint.phrases[2]),
+      speaking(scored.checkpoint.phrases[3]),
+      passageExercise(unit),
+    ],
+  };
+  return paths[lesson.kind].map((exercise) => ({
+    ...exercise,
+    instanceId: `${lesson.id}-${exercise.instanceId}`,
+  }));
 }
 
-function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
+function buildReviewLesson(
+  _unit: Unit,
+  progress: LearnerProgress,
+  mistakesOnly = false,
+  priorityReviewKey?: string,
+): Exercise[] {
   const today = localDateKey();
 
   return Object.entries(progress.reviews)
-    .filter(
-      ([key, record]) =>
-        key.startsWith(`${unit.id}-`) && record.dueDate <= today,
-    )
-    .sort(
-      ([, a], [, b]) => a.dueDate.localeCompare(b.dueDate) || a.stage - b.stage,
-    )
+    .map(([key, record]) => ({
+      key,
+      record,
+      target: findReviewTarget(key.slice(0, key.lastIndexOf(':'))),
+    }))
+    .filter(({ key, record, target }) => {
+      if (!target) return false;
+      if (mistakesOnly) {
+        const mistake = progress.mistakes[key];
+        return (
+          Boolean(mistake) &&
+          mistake.state !== 'recovered' &&
+          mistake.nextPracticeDate <= today
+        );
+      }
+      return record.dueDate <= today;
+    })
+    .sort((a, b) => {
+      if (mistakesOnly) {
+        const first = progress.mistakes[a.key]!;
+        const second = progress.mistakes[b.key]!;
+        return (
+          first.nextPracticeDate.localeCompare(second.nextPracticeDate) ||
+          first.lastMissedAt.localeCompare(second.lastMissedAt) ||
+          second.lapseCount - first.lapseCount
+        );
+      }
+      return (
+        Number(b.key === priorityReviewKey) -
+          Number(a.key === priorityReviewKey) ||
+        a.record.dueDate.localeCompare(b.record.dueDate) ||
+        a.record.stage - b.record.stage
+      );
+    })
     .slice(0, 10)
-    .flatMap(([key]) => {
+    .flatMap(({ key, target }) => {
+      if (!target) return [];
+      const reviewUnit = target.unit;
       const separator = key.lastIndexOf(':');
       const baseId = key.slice(0, separator);
       const skill = key.slice(separator + 1) as SkillMode;
 
-      if (baseId === `${unit.id}-foundation-pronunciation`) {
-        const exercise = foundationExercise(unit, 'pronunciation');
+      if (baseId === `${reviewUnit.id}-foundation-pronunciation`) {
+        const exercise = foundationExercise(reviewUnit, 'pronunciation');
         return [
           {
             ...exercise,
@@ -402,8 +641,8 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
         ];
       }
 
-      if (baseId === `${unit.id}-foundation-grammar`) {
-        const exercise = foundationExercise(unit, 'grammar');
+      if (baseId === `${reviewUnit.id}-foundation-grammar`) {
+        const exercise = foundationExercise(reviewUnit, 'grammar');
         return [
           {
             ...exercise,
@@ -413,8 +652,8 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
         ];
       }
 
-      if (baseId === `${unit.id}-foundation-reading`) {
-        const exercise = passageExercise(unit);
+      if (baseId === `${reviewUnit.id}-foundation-reading`) {
+        const exercise = passageExercise(reviewUnit);
         return [
           {
             ...exercise,
@@ -424,8 +663,8 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
         ];
       }
 
-      if (baseId === `${unit.id}-dialogue`) {
-        const exercise = dialogueExercise(unit);
+      if (baseId === `${reviewUnit.id}-dialogue`) {
+        const exercise = dialogueExercise(reviewUnit);
         return [
           {
             ...exercise,
@@ -435,15 +674,34 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
         ];
       }
 
+      const vocabulary = getUnitVocabulary(reviewUnit.id);
+      const word = vocabulary.find(
+        (item) => baseId === `${reviewUnit.id}-vocab-${item.id}`,
+      );
+      if (word) {
+        const exercise = vocabularyExercise(
+          reviewUnit,
+          word,
+          vocabulary.indexOf(word),
+        );
+        return [
+          {
+            ...exercise,
+            instanceId: `${exercise.instanceId}-review`,
+            eyebrow: 'Due word review',
+          },
+        ];
+      }
+
       const found = findPhrase(baseId);
-      if (!found || found.unit.id !== unit.id) return [];
-      const phraseIndex = unit.phrases.findIndex(
+      if (!found || found.unit.id !== reviewUnit.id) return [];
+      const phraseIndex = reviewUnit.phrases.findIndex(
         (phrase) => phrase.id === found.phrase.id,
       );
       const exercise =
         skill === 'listening'
           ? phraseExercise(
-              unit,
+              reviewUnit,
               phraseIndex,
               'listening',
               'listening',
@@ -452,7 +710,7 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
             )
           : skill === 'speaking'
             ? phraseExercise(
-                unit,
+                reviewUnit,
                 phraseIndex,
                 'speaking',
                 'speaking',
@@ -461,7 +719,7 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
               )
             : skill === 'grammar'
               ? phraseExercise(
-                  unit,
+                  reviewUnit,
                   phraseIndex,
                   'pattern',
                   'grammar',
@@ -469,7 +727,7 @@ function buildReviewLesson(unit: Unit, progress: LearnerProgress): Exercise[] {
                   'Use the sentence frame, then choose the natural expression.',
                 )
               : phraseExercise(
-                  unit,
+                  reviewUnit,
                   phraseIndex,
                   'reading',
                   'reading',
@@ -508,6 +766,10 @@ function findReviewTarget(
   if (phrase)
     return { fil: phrase.phrase.fil, en: phrase.phrase.en, unit: phrase.unit };
   for (const unit of units) {
+    const word = getUnitVocabulary(unit.id).find(
+      (item) => baseId === `${unit.id}-vocab-${item.id}`,
+    );
+    if (word) return { fil: word.fil, en: word.en, unit };
     const foundation = getFoundation(unit.id);
     if (baseId === `${unit.id}-foundation-pronunciation`) {
       return {
@@ -536,34 +798,95 @@ function findReviewTarget(
   return { fil: unit.dialogue.line, en: unit.dialogue.situation, unit };
 }
 
+function hasCompletedCurrentUnit(progress: LearnerProgress, unit: Unit) {
+  return getUnitLessons(unit.id).every((lesson) =>
+    progress.completedLessons.includes(lesson.id),
+  );
+}
+
+function isUnitUnlocked(progress: LearnerProgress, unit: Unit) {
+  return (
+    unit.number === 1 ||
+    progress.activeUnitId === unit.id ||
+    hasCompletedCurrentUnit(progress, unit)
+  );
+}
+
+function isLessonUnlocked(
+  progress: LearnerProgress,
+  unit: Unit,
+  lesson: CourseLesson,
+) {
+  if (progress.completedLessons.includes(lesson.id)) return true;
+  return (
+    progress.activeUnitId === unit.id && progress.activeLessonId === lesson.id
+  );
+}
+
+function introducedVocabularyCount(progress: LearnerProgress, unit: Unit) {
+  const completed = new Set(progress.completedLessons);
+  const introduced = new Set<number>();
+  for (const lesson of getUnitLessons(unit.id)) {
+    if (!completed.has(lesson.id)) continue;
+    lessonIntroductionPlan[lesson.kind].vocabulary.forEach((index) =>
+      introduced.add(index),
+    );
+  }
+  return introduced.size;
+}
+
 export default function SalitaApp({
   initialTodayKey,
 }: {
   initialTodayKey: string;
 }) {
   const [view, setView] = useState<View>('today');
-  const [progress, setProgress] = useState<LearnerProgress>(
-    createInitialProgress,
-  );
+  const {
+    progress,
+    hydrated,
+    status: syncStatus,
+    storageIssue,
+    accountEmail,
+    updatedAt,
+    legacyConflict,
+    dispatch,
+    exportProgress,
+    importBackup,
+    resolveLegacyConflict,
+    clearThisDevice,
+    deleteEverywhere,
+  } = useSyncedProgress();
   const [todayKey, setTodayKey] = useState(initialTodayKey);
-  const [hydrated, setHydrated] = useState(false);
-  const [storageIssue, setStorageIssue] = useState(false);
   const [lessonSession, setLessonSession] = useState<{
     unitId: string;
-    mode: 'lesson' | 'review';
+    lessonId: string;
+    mode: 'lesson' | 'review' | 'mistakes' | 'replay';
+    sessionId: string;
+    priorityReviewKey?: string;
   } | null>(null);
+  const [vocabularySession, setVocabularySession] = useState<{
+    unitId: string;
+    sessionId: string;
+  } | null>(null);
+  const [showCourseExpansionNotice, setShowCourseExpansionNotice] =
+    useState(false);
 
   useEffect(() => {
-    const frame = window.requestAnimationFrame(() => {
-      try {
-        setProgress(parseProgress(window.localStorage.getItem(STORAGE_KEY)));
-      } catch {
-        setStorageIssue(true);
-      }
-      setHydrated(true);
-    });
-    return () => window.cancelAnimationFrame(frame);
-  }, []);
+    if (!hydrated) return;
+    try {
+      if (window.localStorage.getItem(COURSE_EXPANSION_NOTICE_KEY)) return;
+      const hasEarlierWork =
+        progress.xp > 0 ||
+        progress.totalSessions > 0 ||
+        progress.completedUnits.length > 0 ||
+        progress.completedLessons.length > 0 ||
+        Object.keys(progress.reviews).length > 0;
+      window.localStorage.setItem(COURSE_EXPANSION_NOTICE_KEY, '1');
+      queueMicrotask(() => setShowCourseExpansionNotice(hasEarlierWork));
+    } catch {
+      // Storage-blocked browsers already receive the durable-storage notice.
+    }
+  }, [hydrated, progress]);
 
   useEffect(() => {
     const refreshToday = () => setTodayKey(localDateKey());
@@ -572,34 +895,87 @@ export default function SalitaApp({
     return () => window.clearInterval(interval);
   }, []);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(progress));
-    } catch {
-      window.requestAnimationFrame(() => setStorageIssue(true));
-    }
-  }, [hydrated, progress]);
+  const startLesson = useCallback(
+    (unitId: string, requestedLessonId?: string) => {
+      const unit = getUnit(unitId);
+      const lessons = getUnitLessons(unit.id);
+      const activeInUnit = lessons.find(
+        (lesson) =>
+          lesson.id === progress.activeLessonId &&
+          !progress.completedLessons.includes(lesson.id),
+      );
+      const lesson = requestedLessonId
+        ? getLesson(unit.id, requestedLessonId)
+        : (activeInUnit ??
+          lessons.find(
+            (candidate) => !progress.completedLessons.includes(candidate.id),
+          ) ??
+          lessons[0]);
+      if (!isLessonUnlocked(progress, unit, lesson)) return;
+      const completed = progress.completedLessons.includes(lesson.id);
+      const canonical =
+        progress.activeUnitId === unit.id &&
+        progress.activeLessonId === lesson.id;
+      if (!completed && !canonical) return;
+      setLessonSession({
+        unitId: unit.id,
+        lessonId: lesson.id,
+        mode: completed ? 'replay' : 'lesson',
+        sessionId: crypto.randomUUID(),
+      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+    [progress],
+  );
 
-  useEffect(() => {
-    const syncProgress = (event: StorageEvent) => {
-      if (event.key === STORAGE_KEY) setProgress(parseProgress(event.newValue));
-    };
-    window.addEventListener('storage', syncProgress);
-    return () => window.removeEventListener('storage', syncProgress);
-  }, []);
-
-  const startLesson = useCallback((unitId: string) => {
+  const startReview = useCallback((unitId: string, reviewKey?: string) => {
     const unit = getUnit(unitId);
-    setProgress((current) => ({ ...current, activeUnitId: unit.id }));
-    setLessonSession({ unitId: unit.id, mode: 'lesson' });
+    const lesson = getLesson(unit.id);
+    setLessonSession({
+      unitId: unit.id,
+      lessonId: lesson.id,
+      mode: 'review',
+      sessionId: crypto.randomUUID(),
+      priorityReviewKey: reviewKey,
+    });
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }, []);
 
-  const startReview = useCallback((unitId: string) => {
-    setLessonSession({ unitId: getUnit(unitId).id, mode: 'review' });
+  const startMistakes = useCallback(() => {
+    const today = localDateKey();
+    const nextMistake = Object.entries(progress.mistakes)
+      .filter(
+        ([, record]) =>
+          record.state !== 'recovered' && record.nextPracticeDate <= today,
+      )
+      .sort(([, a], [, b]) =>
+        a.nextPracticeDate.localeCompare(b.nextPracticeDate),
+      )
+      .map(([key]) => findReviewTarget(key.slice(0, key.lastIndexOf(':'))))
+      .find(Boolean);
+    if (!nextMistake) return;
+    const lesson = getLesson(nextMistake.unit.id);
+    setLessonSession({
+      unitId: nextMistake.unit.id,
+      lessonId: lesson.id,
+      mode: 'mistakes',
+      sessionId: crypto.randomUUID(),
+    });
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  }, []);
+  }, [progress.mistakes]);
+
+  const startVocabulary = useCallback(
+    (unitId: string) => {
+      const unit = getUnit(unitId);
+      if (introducedVocabularyCount(progress, unit) < 2) return;
+      setVocabularySession({
+        unitId: unit.id,
+        sessionId: crypto.randomUUID(),
+      });
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    },
+    [progress],
+  );
 
   useEffect(() => {
     const modelContext = (
@@ -683,90 +1059,138 @@ export default function SalitaApp({
     return () => lifecycle.abort();
   }, [progress, startLesson]);
 
-  const finishLesson = useCallback(
+  const finishSession = useCallback(
     (
       unit: Unit,
+      lesson: CourseLesson,
+      sessionId: string,
       summary: {
         xp: number;
         firstTryCorrect: number;
         prompts: number;
         minutes: number;
         modes: SkillMode[];
-        kind: 'lesson' | 'review';
+        kind: ActivityKind;
+        sourceUnitIds?: string[];
       },
     ) => {
-      const now = new Date();
-      const dateKey = localDateKey(now);
-      setProgress((current) => {
-        const nextUnit = nextUnitAfter(unit.id);
-        return {
-          ...current,
-          totalSessions: current.totalSessions + 1,
-          completedDays: [...new Set([...current.completedDays, dateKey])],
-          completedUnits:
-            summary.kind === 'lesson'
-              ? [...new Set([...current.completedUnits, unit.id])]
-              : current.completedUnits,
-          activeUnitId:
-            summary.kind === 'lesson' ? nextUnit.id : current.activeUnitId,
-          dailyMinutes: {
-            ...current.dailyMinutes,
-            [dateKey]: (current.dailyMinutes[dateKey] ?? 0) + summary.minutes,
-          },
-          history: [
-            ...current.history,
-            {
-              id: `${unit.id}-${now.toISOString()}`,
-              dateKey,
-              completedAt: now.toISOString(),
-              unitId: unit.id,
-              xp: summary.xp,
-              firstTryCorrect: summary.firstTryCorrect,
-              prompts: summary.prompts,
-              modes: summary.modes,
-              kind: summary.kind,
-            },
-          ].slice(-120),
-        };
+      const next =
+        summary.kind === 'lesson'
+          ? nextLessonAfter(unit.id, lesson.id)
+          : {
+              unit: getUnit(progress.activeUnitId),
+              lesson: getLesson(progress.activeUnitId, progress.activeLessonId),
+              completedUnit: false,
+            };
+      dispatch({
+        type: 'session-completed',
+        sessionId,
+        unitId: unit.id,
+        sourceUnitIds: summary.sourceUnitIds,
+        lessonId: summary.kind === 'lesson' ? lesson.id : undefined,
+        nextUnitId: next.unit.id,
+        nextLessonId: next.lesson.id,
+        completesUnit: summary.kind === 'lesson' && next.completedUnit,
+        kind: summary.kind,
+        minutes: summary.minutes,
+        firstTryCorrect: summary.firstTryCorrect,
+        prompts: summary.prompts,
+        modes: summary.modes,
+        reportedXp: summary.xp,
       });
     },
-    [],
+    [dispatch, progress.activeLessonId, progress.activeUnitId],
   );
 
-  const exportProgress = () => {
-    const blob = new Blob([JSON.stringify(progress, null, 2)], {
-      type: 'application/json',
-    });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `salita-progress-${localDateKey()}.json`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const resetProgress = () => {
+  const resetThisDevice = async () => {
     if (
       !window.confirm(
-        'Reset all Salita progress on this device? This cannot be undone.',
+        'Clear Salita’s cached progress on this device? Your synced account copy will stay safe.',
       )
     )
       return;
-    setProgress(createInitialProgress());
+    if (!(await clearThisDevice())) {
+      window.alert(
+        'Salita still has unsynced work on this device. Reconnect and wait for “saved” before clearing it.',
+      );
+      return;
+    }
     setView('today');
   };
 
+  const deleteSyncedProgress = async () => {
+    if (
+      !window.confirm(
+        'Delete your synced Salita progress everywhere? Export a backup first if you may want it later.',
+      )
+    )
+      return;
+    if (
+      !window.confirm(
+        'Final confirmation: delete XP, streaks, lesson history, reviews, and mistakes from every synced device?',
+      )
+    )
+      return;
+    if (await deleteEverywhere()) setView('today');
+  };
+
+  const recordAttempt = useCallback(
+    (sessionId: string, reviewKey: string, outcome: AttemptOutcome) =>
+      dispatch({ type: 'review-attempt', sessionId, reviewKey, outcome }),
+    [dispatch],
+  );
+
+  if (!hydrated) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-background px-5 text-foreground">
+        <section className="text-center" aria-live="polite">
+          <span className="mx-auto grid size-14 place-items-center rounded-[16px] bg-primary text-black">
+            <Sparkles className="size-6" />
+          </span>
+          <p className="mt-4 text-sm font-black">Opening your learning path…</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (vocabularySession) {
+    const unit = getUnit(vocabularySession.unitId);
+    return (
+      <VocabularyMatchGame
+        key={vocabularySession.sessionId}
+        unit={unit}
+        progress={progress}
+        sessionId={vocabularySession.sessionId}
+        onAttempt={recordAttempt}
+        onExit={() => setVocabularySession(null)}
+        onFinish={(summary) => {
+          const lesson = getLesson(
+            progress.activeUnitId,
+            progress.activeLessonId,
+          );
+          finishSession(unit, lesson, vocabularySession.sessionId, summary);
+        }}
+      />
+    );
+  }
+
   if (lessonSession) {
+    const lesson = getLesson(lessonSession.unitId, lessonSession.lessonId);
     return (
       <LessonExperience
-        key={`${lessonSession.unitId}-${lessonSession.mode}`}
+        key={lessonSession.sessionId}
         unit={getUnit(lessonSession.unitId)}
+        lesson={lesson}
+        sessionId={lessonSession.sessionId}
         reviewMode={lessonSession.mode === 'review'}
+        mistakesMode={lessonSession.mode === 'mistakes'}
+        replayMode={lessonSession.mode === 'replay'}
+        priorityReviewKey={lessonSession.priorityReviewKey}
         progress={progress}
-        setProgress={setProgress}
+        onReviewAttempt={recordAttempt}
         onExit={() => setLessonSession(null)}
-        onFinish={finishLesson}
-        onNext={(unitId) => setLessonSession({ unitId, mode: 'lesson' })}
+        onFinish={finishSession}
+        onNext={startLesson}
       />
     );
   }
@@ -787,6 +1211,33 @@ export default function SalitaApp({
             blocking local storage.
           </output>
         )}
+        <SyncNotice
+          status={syncStatus}
+          accountEmail={accountEmail}
+          legacyConflict={legacyConflict}
+          onResolve={resolveLegacyConflict}
+        />
+        {showCourseExpansionNotice && (
+          <section className="mb-5 flex items-start gap-3 rounded-[12px] border border-[#83b7f5] bg-[var(--f-blue-3)] p-4 text-sm text-[#183f7b]">
+            <Sparkles className="mt-0.5 size-5 shrink-0" />
+            <div className="flex-1">
+              <p className="font-black">Your course just grew.</p>
+              <p className="mt-1 leading-5">
+                Your XP, streaks, reviews, mistakes, and earlier work were kept.
+                Salita placed you at the earliest unfinished foundation so the
+                new path builds steadily without gaps.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setShowCourseExpansionNotice(false)}
+              className="grid size-11 shrink-0 place-items-center rounded-full hover:bg-white/50 focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              aria-label="Dismiss course update"
+            >
+              <X className="size-4" />
+            </button>
+          </section>
+        )}
         {view === 'today' && (
           <TodayView
             progress={progress}
@@ -796,7 +1247,11 @@ export default function SalitaApp({
           />
         )}
         {view === 'learn' && (
-          <LearnView progress={progress} onStart={startLesson} />
+          <LearnView
+            progress={progress}
+            onStart={startLesson}
+            onStartVocabulary={startVocabulary}
+          />
         )}
         {view === 'review' && (
           <ReviewView
@@ -804,19 +1259,108 @@ export default function SalitaApp({
             todayKey={todayKey}
             onStartLesson={startLesson}
             onStartReview={startReview}
+            onStartMistakes={startMistakes}
+            onStartVocabulary={startVocabulary}
           />
         )}
         {view === 'progress' && (
           <ProgressView
             progress={progress}
             todayKey={todayKey}
-            onExport={exportProgress}
-            onReset={resetProgress}
+            syncStatus={syncStatus}
+            accountEmail={accountEmail}
+            updatedAt={updatedAt}
+            onExport={() => void exportProgress()}
+            onImport={importBackup}
+            onClearDevice={() => void resetThisDevice()}
+            onDeleteEverywhere={() => void deleteSyncedProgress()}
           />
         )}
       </div>
       <MobileNav view={view} onNavigate={setView} />
     </main>
+  );
+}
+
+function SyncNotice({
+  status,
+  accountEmail,
+  legacyConflict,
+  onResolve,
+}: {
+  status: ReturnType<typeof useSyncedProgress>['status'];
+  accountEmail: string | null;
+  legacyConflict: ReturnType<typeof useSyncedProgress>['legacyConflict'];
+  onResolve: ReturnType<typeof useSyncedProgress>['resolveLegacyConflict'];
+}) {
+  if (legacyConflict) {
+    return (
+      <section className="mb-6 rounded-[16px] border border-[#e2b600] bg-[var(--f-yellow-1)] p-5 text-[#5c4a00]">
+        <div className="flex items-start gap-3">
+          <TriangleAlert className="mt-0.5 size-5 shrink-0" />
+          <div className="flex-1">
+            <p className="font-black">Choose which progress to keep</p>
+            <p className="mt-1 text-sm leading-5">
+              This browser has an older device-only history
+              {legacyConflict.belongsToAnotherAccount
+                ? ' that was linked to a different account'
+                : ''}
+              . A backup will be retained before it is changed.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => void onResolve('keep-cloud')}
+                className="min-h-11 rounded-[5px] bg-white font-black"
+              >
+                Keep account copy
+              </Button>
+              <Button
+                variant="outline"
+                onClick={() => void onResolve('merge')}
+                className="min-h-11 rounded-[5px] bg-white font-black"
+              >
+                Merge both
+              </Button>
+              <Button
+                onClick={() => void onResolve('replace')}
+                className="min-h-11 rounded-[5px] bg-[#5c4a00] font-black text-white hover:bg-[#493b00]"
+              >
+                Use device copy
+              </Button>
+            </div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+  if (status === 'offline' || status === 'attention') {
+    return (
+      <output className="mb-5 flex items-start gap-3 rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-sm text-[#5c4a00]">
+        <CloudOff className="mt-0.5 size-5 shrink-0" />
+        <span>
+          {status === 'attention'
+            ? 'This device needs to reload the latest account copy before it can sync.'
+            : 'You are offline. New work stays queued on this device and will sync when the connection returns.'}
+        </span>
+      </output>
+    );
+  }
+  if (status === 'device-only') {
+    return (
+      <output className="mb-5 flex items-start gap-3 rounded-[8px] bg-[var(--f-blue-3)] p-4 text-sm text-[#183f7b]">
+        <Smartphone className="mt-0.5 size-5 shrink-0" />
+        Device-only mode. Sign in through the published Salita site to carry
+        progress between desktop and iPhone.
+      </output>
+    );
+  }
+  return (
+    <output className="sr-only" aria-live="polite">
+      {status === 'saving'
+        ? 'Saving progress'
+        : `Progress saved${accountEmail ? ` for ${accountEmail}` : ''}`}
+    </output>
   );
 }
 
@@ -933,13 +1477,32 @@ function TodayView({
 }: {
   progress: LearnerProgress;
   todayKey: string;
-  onStart: (unitId: string) => void;
+  onStart: (unitId: string, lessonId?: string) => void;
   onNavigate: (view: View) => void;
 }) {
   const unit = getUnit(progress.activeUnitId);
+  const lesson = getLesson(unit.id, progress.activeLessonId);
+  const completedInUnit = getUnitLessons(unit.id).filter((item) =>
+    progress.completedLessons.includes(item.id),
+  ).length;
   const minutes = progress.dailyMinutes[todayKey] ?? 0;
   const goalPercent = Math.min(100, (minutes / 10) * 100);
   const { current } = deriveStreaks(progress.completedDays, todayKey);
+  const dueReviewKeys = new Set(
+    Object.entries(progress.reviews)
+      .filter(
+        ([key, record]) =>
+          record.dueDate <= todayKey &&
+          Boolean(findReviewTarget(key.slice(0, key.lastIndexOf(':')))),
+      )
+      .map(([key]) => key),
+  );
+  for (const [key, mistake] of Object.entries(progress.mistakes)) {
+    if (mistake.state !== 'recovered' && mistake.nextPracticeDate <= todayKey) {
+      dueReviewKeys.add(key);
+    }
+  }
+  const dueCount = dueReviewKeys.size;
   const calculatedDay =
     progress.completedDays.length +
     (progress.completedDays.includes(todayKey) ? 0 : 1);
@@ -979,7 +1542,8 @@ function TodayView({
               Everyday conversation
             </div>
             <p className="mb-2 text-sm font-black">
-              Unit {unit.number} · {unit.minutes} min
+              Unit {unit.number} · Lesson {lesson.order} of 6 · {lesson.minutes}{' '}
+              min
             </p>
             <h2
               lang="fil"
@@ -990,21 +1554,46 @@ function TodayView({
             <p className="mt-3 max-w-md text-base leading-6 text-[#10066c]">
               {unit.description}
             </p>
+            <p className="mt-3 max-w-md rounded-[8px] bg-white/30 px-3 py-2 text-sm font-bold">
+              {lesson.title}: {lesson.objective}
+            </p>
             <p className="mt-3 text-xs font-black uppercase tracking-[0.09em]">
               Sound · Grammar · Reading · Conversation
             </p>
             <div className="mt-6 flex flex-wrap items-center gap-4">
-              <Button
-                size="lg"
-                onClick={() => onStart(unit.id)}
-                className="h-12 rounded-[5px] bg-primary px-5 text-base font-black text-black hover:bg-[var(--f-pink-light)]"
-              >
-                {progress.history.length ? 'Continue lesson' : 'Start lesson'}
-                <ArrowRight className="ml-1 size-4" />
-              </Button>
+              {dueCount ? (
+                <>
+                  <Button
+                    size="lg"
+                    onClick={() => onNavigate('review')}
+                    className="h-12 rounded-[5px] bg-primary px-5 text-base font-black text-black hover:bg-[var(--f-pink-light)]"
+                  >
+                    Review {dueCount} due <RefreshCcw className="ml-1 size-4" />
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="lg"
+                    onClick={() => onStart(unit.id, lesson.id)}
+                    className="h-12 rounded-[5px] border-[#10066c]/30 bg-white/35 px-5 font-black text-[#10066c]"
+                  >
+                    New lesson
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  size="lg"
+                  onClick={() => onStart(unit.id, lesson.id)}
+                  className="h-12 rounded-[5px] bg-primary px-5 text-base font-black text-black hover:bg-[var(--f-pink-light)]"
+                >
+                  {completedInUnit ? 'Continue lesson' : 'Start lesson'}
+                  <ArrowRight className="ml-1 size-4" />
+                </Button>
+              )}
               <div className="flex items-center gap-2 text-sm font-black">
-                <Star className="size-4 fill-[var(--f-yellow-3)] text-[#5c4a00]" />{' '}
-                up to 110 XP
+                <Star className="size-4 fill-[var(--f-yellow-3)] text-[#5c4a00]" />
+                {dueCount
+                  ? 'Recall first, then add new material'
+                  : 'Up to 10 XP per scored prompt'}
               </div>
             </div>
           </div>
@@ -1034,10 +1623,9 @@ function TodayView({
               ink: 'text-[var(--f-green-4)]',
             },
           ].map(({ icon: Icon, label, detail, color, ink }) => (
-            <button
+            <article
               key={label}
-              onClick={() => onStart(unit.id)}
-              className="group flex min-h-18 items-center gap-3 rounded-[8px] border border-border bg-card p-4 text-left transition hover:-translate-y-0.5 hover:shadow-[0_2px_10px_rgba(25,1,52,0.08)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
+              className="flex min-h-18 items-center gap-3 rounded-[8px] border border-border bg-card p-4 text-left"
             >
               <span
                 className={`grid size-10 shrink-0 place-items-center rounded-[8px] ${color} ${ink}`}
@@ -1052,7 +1640,7 @@ function TodayView({
                   {detail}
                 </span>
               </span>
-            </button>
+            </article>
           ))}
         </div>
 
@@ -1270,16 +1858,24 @@ function UnitRow({
   progress: LearnerProgress;
   onStart: (unitId: string) => void;
 }) {
-  const complete = progress.completedUnits.includes(unit.id);
+  const complete = hasCompletedCurrentUnit(progress, unit);
+  const legacyComplete = progress.completedUnits.includes(unit.id) && !complete;
   const current = progress.activeUnitId === unit.id;
-  const [background, color] = UNIT_COLORS[unit.number - 1];
+  const unlocked = isUnitUnlocked(progress, unit);
+  const duration = getUnitLessons(unit.id).reduce(
+    (total, lesson) => total + lesson.minutes,
+    0,
+  );
+  const [background, color] =
+    UNIT_COLORS[(unit.number - 1) % UNIT_COLORS.length];
 
   return (
     <button
       onClick={() => onStart(unit.id)}
+      disabled={!unlocked}
       className={`flex w-full items-center gap-4 rounded-[8px] border bg-card p-4 text-left transition hover:-translate-y-0.5 hover:shadow-[0_2px_10px_rgba(25,1,52,0.08)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring ${
         current ? 'border-[#3174d2]' : 'border-border'
-      }`}
+      } disabled:cursor-not-allowed disabled:opacity-65`}
     >
       <span
         className={`grid size-12 shrink-0 place-items-center rounded-[8px] text-base font-black ${background} ${color}`}
@@ -1299,9 +1895,17 @@ function UnitRow({
               Practiced
             </Tag>
           )}
+          {legacyComplete && (
+            <Tag className="bg-[var(--f-yellow-1)] text-[#6a5000]">
+              Earlier progress
+            </Tag>
+          )}
+          {!unlocked && (
+            <Tag className="bg-muted text-muted-foreground">Locked</Tag>
+          )}
         </span>
         <span className="mt-1 block truncate text-xs text-muted-foreground">
-          {unit.title} · {unit.minutes} min
+          {unit.title} · {duration} min
         </span>
       </span>
       <ChevronRight className="size-5 shrink-0 text-muted-foreground" />
@@ -1312,10 +1916,20 @@ function UnitRow({
 function LearnView({
   progress,
   onStart,
+  onStartVocabulary,
 }: {
   progress: LearnerProgress;
-  onStart: (unitId: string) => void;
+  onStart: (unitId: string, lessonId?: string) => void;
+  onStartVocabulary: (unitId: string) => void;
 }) {
+  const lessonCount = units.reduce(
+    (total, unit) => total + getUnitLessons(unit.id).length,
+    0,
+  );
+  const expressionCount = units.reduce(
+    (total, unit) => total + unit.phrases.length,
+    0,
+  );
   return (
     <section>
       <div className="grid overflow-hidden rounded-[24px] bg-card shadow-[0_2px_10px_rgba(25,1,52,0.08)] md:grid-cols-[1.05fr_.95fr]">
@@ -1327,9 +1941,9 @@ function LearnView({
             Speak first. Notice the pattern. Use it again.
           </h1>
           <p className="mt-4 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
-            Eight practical units build from greetings to everyday plans and
-            urgent help. Every lesson mixes pronunciation, grammar, listening,
-            graded reading, and speaking.
+            Forty-three gradual units move from sounds and survival conversation
+            through sentence structure, focus and aspect, connected speech, and
+            storytelling. Each unit is split into six short lessons.
           </p>
         </div>
         <Image
@@ -1413,26 +2027,40 @@ function LearnView({
       <div className="mb-4 mt-8 flex items-end justify-between gap-4">
         <div>
           <p className="text-xs font-black uppercase tracking-[0.12em] text-muted-foreground">
-            8 units · 56 core phrases
+            {units.length} units · {lessonCount} lessons · {expressionCount}{' '}
+            core expressions
           </p>
           <h2 className="mt-1 text-2xl font-black">
             Your conversational foundation
           </h2>
         </div>
         <p className="hidden text-sm font-bold text-muted-foreground sm:block">
-          Choose any unit
+          Follow the unlocked path
         </p>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">
         {units.map((unit) => {
-          const complete = progress.completedUnits.includes(unit.id);
           const current = progress.activeUnitId === unit.id;
-          const [background, color] = UNIT_COLORS[unit.number - 1];
+          const lessons = getUnitLessons(unit.id);
+          const completedLessonCount = lessons.filter((lesson) =>
+            progress.completedLessons.includes(lesson.id),
+          ).length;
+          const complete = completedLessonCount === lessons.length;
+          const legacyComplete =
+            progress.completedUnits.includes(unit.id) && !complete;
+          const unlocked = isUnitUnlocked(progress, unit);
+          const vocabularyCount = introducedVocabularyCount(progress, unit);
+          const duration = lessons.reduce(
+            (total, lesson) => total + lesson.minutes,
+            0,
+          );
+          const [background, color] =
+            UNIT_COLORS[(unit.number - 1) % UNIT_COLORS.length];
           return (
             <article
               key={unit.id}
-              className={`rounded-[16px] border bg-card p-5 ${current ? 'border-[#3174d2]' : 'border-border'}`}
+              className={`rounded-[16px] border bg-card p-5 ${current ? 'border-[#3174d2]' : 'border-border'} ${unlocked ? '' : 'opacity-70'}`}
             >
               <div className="flex items-start gap-4">
                 <span
@@ -1454,6 +2082,16 @@ function LearnView({
                         Up next
                       </Tag>
                     )}
+                    {legacyComplete && (
+                      <Tag className="bg-[var(--f-yellow-1)] text-[#6a5000]">
+                        Earlier progress saved
+                      </Tag>
+                    )}
+                    {!unlocked && (
+                      <Tag className="bg-muted text-muted-foreground">
+                        <LockKeyhole className="size-3" /> Locked
+                      </Tag>
+                    )}
                   </div>
                   <p className="mt-1 text-sm font-bold text-muted-foreground">
                     {unit.title}
@@ -1463,16 +2101,67 @@ function LearnView({
               <p className="mt-4 min-h-10 text-sm leading-5 text-muted-foreground">
                 {unit.description}
               </p>
+              <div className="mt-4">
+                <div className="mb-2 flex items-center justify-between text-[11px] font-black uppercase tracking-[0.08em] text-muted-foreground">
+                  <span>{completedLessonCount}/6 lessons</span>
+                  <span>{getUnitVocabulary(unit.id).length} core words</span>
+                </div>
+                <div
+                  className="grid grid-cols-6 gap-1"
+                  aria-label={`${completedLessonCount} of 6 lessons completed`}
+                >
+                  {lessons.map((lesson) => (
+                    <button
+                      key={lesson.id}
+                      type="button"
+                      onClick={() => onStart(unit.id, lesson.id)}
+                      disabled={!isLessonUnlocked(progress, unit, lesson)}
+                      aria-label={`${lesson.title}${progress.completedLessons.includes(lesson.id) ? ', completed' : ''}`}
+                      className="grid min-h-11 place-items-center rounded-[5px] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:cursor-not-allowed"
+                    >
+                      <span
+                        aria-hidden="true"
+                        className={`h-2.5 w-full rounded-full ${
+                          progress.completedLessons.includes(lesson.id)
+                            ? 'bg-[var(--f-success-strong)]'
+                            : lesson.id === progress.activeLessonId
+                              ? 'bg-primary'
+                              : 'bg-border'
+                        }`}
+                      />
+                    </button>
+                  ))}
+                </div>
+              </div>
               <div className="mt-4 flex items-center justify-between border-t border-border pt-4">
                 <span className="flex items-center gap-1.5 text-xs font-bold text-muted-foreground">
-                  <Clock3 className="size-4" /> {unit.minutes} min
+                  <Clock3 className="size-4" /> {duration} min total
                 </span>
-                <Button
-                  onClick={() => onStart(unit.id)}
-                  className="min-h-11 rounded-[5px] bg-primary px-4 font-black text-black hover:bg-[var(--f-pink-light)]"
-                >
-                  {complete ? 'Practice again' : 'Start unit'} <ArrowRight />
-                </Button>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => onStartVocabulary(unit.id)}
+                    disabled={vocabularyCount < 2}
+                    className="min-h-11 rounded-[5px] font-black"
+                  >
+                    {vocabularyCount >= 2 ? 'Match' : 'Words locked'}
+                  </Button>
+                  <Button
+                    onClick={() => onStart(unit.id)}
+                    disabled={!unlocked}
+                    className="min-h-11 rounded-[5px] bg-primary px-4 font-black text-black hover:bg-[var(--f-pink-light)]"
+                  >
+                    {!unlocked
+                      ? 'Locked'
+                      : complete
+                        ? 'Review'
+                        : completedLessonCount || legacyComplete
+                          ? 'Continue'
+                          : 'Start'}{' '}
+                    <ArrowRight />
+                  </Button>
+                </div>
               </div>
             </article>
           );
@@ -1506,11 +2195,15 @@ function ReviewView({
   todayKey,
   onStartLesson,
   onStartReview,
+  onStartMistakes,
+  onStartVocabulary,
 }: {
   progress: LearnerProgress;
   todayKey: string;
-  onStartLesson: (unitId: string) => void;
-  onStartReview: (unitId: string) => void;
+  onStartLesson: (unitId: string, lessonId?: string) => void;
+  onStartReview: (unitId: string, reviewKey?: string) => void;
+  onStartMistakes: () => void;
+  onStartVocabulary: (unitId: string) => void;
 }) {
   const reviewItems = Object.entries(progress.reviews)
     .map(([key, record]) => ({
@@ -1528,6 +2221,16 @@ function ReviewView({
   const hasPracticed = Object.keys(progress.reviews).some((key) =>
     Boolean(findReviewTarget(key.slice(0, key.lastIndexOf(':')))),
   );
+  const dueMistakes = Object.values(progress.mistakes).filter(
+    (record) =>
+      record.state !== 'recovered' && record.nextPracticeDate <= todayKey,
+  ).length;
+  const laterMistakes = Object.values(progress.mistakes).filter(
+    (record) =>
+      record.state !== 'recovered' && record.nextPracticeDate > todayKey,
+  ).length;
+  const activeUnit = getUnit(progress.activeUnitId);
+  const activeVocabularyCount = introducedVocabularyCount(progress, activeUnit);
 
   return (
     <section className="mx-auto max-w-4xl">
@@ -1548,26 +2251,84 @@ function ReviewView({
         </p>
       </div>
 
+      <div className="mb-8 grid gap-4 sm:grid-cols-2">
+        <article className="rounded-[16px] border border-border bg-card p-5">
+          <span className="grid size-11 place-items-center rounded-[8px] bg-[#fcabb4] text-[#71000f]">
+            <TriangleAlert className="size-5" />
+          </span>
+          <p className="mt-4 text-xs font-black uppercase tracking-[0.1em] text-muted-foreground">
+            Personal repair queue
+          </p>
+          <h2 className="mt-1 text-xl font-black">Practice mistakes</h2>
+          <p className="mt-2 text-sm leading-5 text-muted-foreground">
+            {dueMistakes
+              ? `${dueMistakes} item${dueMistakes === 1 ? '' : 's'} ${dueMistakes === 1 ? 'is' : 'are'} ready for clean recall now.`
+              : laterMistakes
+                ? `${laterMistakes} repaired item${laterMistakes === 1 ? '' : 's'} will return on a later due day.`
+                : 'Missed words, forms, and listening prompts will collect here automatically.'}
+          </p>
+          <Button
+            onClick={onStartMistakes}
+            disabled={!dueMistakes}
+            className="mt-5 min-h-11 rounded-[5px] bg-primary px-4 font-black text-black hover:bg-[var(--f-pink-light)]"
+          >
+            <RefreshCcw /> Practice mistakes
+          </Button>
+        </article>
+
+        <article className="rounded-[16px] border border-border bg-card p-5">
+          <span className="grid size-11 place-items-center rounded-[8px] bg-[var(--f-cyan-1)] text-[#005c83]">
+            <Languages className="size-5" />
+          </span>
+          <p className="mt-4 text-xs font-black uppercase tracking-[0.1em] text-muted-foreground">
+            Two-minute vocabulary
+          </p>
+          <h2 className="mt-1 text-xl font-black">Quick Match</h2>
+          <p className="mt-2 text-sm leading-5 text-muted-foreground">
+            {activeVocabularyCount >= 2
+              ? `Match ${activeVocabularyCount} introduced Tagalog words from Unit ${activeUnit.number}. Every miss joins your repair queue.`
+              : 'Finish First words & sounds in your current unit to unlock rapid matching.'}
+          </p>
+          <Button
+            variant="outline"
+            onClick={() => onStartVocabulary(activeUnit.id)}
+            disabled={activeVocabularyCount < 2}
+            className="mt-5 min-h-11 rounded-[5px] font-black"
+          >
+            <Sparkles /> Match vocabulary
+          </Button>
+        </article>
+      </div>
+
       {!visibleItems.length ? (
         <div className="rounded-[24px] border border-border bg-card p-8 text-center sm:p-12">
           <span className="mx-auto grid size-16 place-items-center rounded-full bg-[var(--f-green-1)] text-[var(--f-green-4)]">
             <Sparkles className="size-7" />
           </span>
           <h2 className="mt-5 text-xl font-black">
-            {hasPracticed
-              ? 'You’re caught up'
-              : 'Your review deck is ready to grow'}
+            {dueMistakes
+              ? 'Your spaced deck is caught up'
+              : hasPracticed
+                ? 'You’re caught up'
+                : 'Your review deck is ready to grow'}
           </h2>
           <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-            {hasPracticed
-              ? 'Nothing is due right now. Your next lesson can introduce new phrases without moving future reviews ahead.'
-              : 'Complete your first lesson. Salita will bring phrases back at useful intervals so they stick.'}
+            {dueMistakes
+              ? 'Your scheduled reviews are done, and mistake practice is ready above.'
+              : hasPracticed
+                ? 'Nothing is due right now. Your next lesson can introduce new phrases without moving future reviews ahead.'
+                : 'Complete your first lesson. Salita will bring phrases back at useful intervals so they stick.'}
           </p>
           <Button
-            onClick={() => onStartLesson(progress.activeUnitId)}
+            onClick={
+              dueMistakes
+                ? onStartMistakes
+                : () => onStartLesson(progress.activeUnitId)
+            }
             className="mt-6 min-h-12 rounded-[5px] bg-primary px-5 font-black text-black hover:bg-[var(--f-pink-light)]"
           >
-            Start today’s lesson <ArrowRight />
+            {dueMistakes ? 'Practice mistakes' : 'Start today’s lesson'}{' '}
+            <ArrowRight />
           </Button>
         </div>
       ) : (
@@ -1597,7 +2358,7 @@ function ReviewView({
               return (
                 <button
                   key={item.key}
-                  onClick={() => onStartReview(found.unit.id)}
+                  onClick={() => onStartReview(found.unit.id, item.key)}
                   className="flex w-full items-center gap-4 rounded-[8px] border border-border bg-card p-4 text-left hover:shadow-[0_2px_10px_rgba(25,1,52,0.08)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
                 >
                   <span className="grid size-11 shrink-0 place-items-center rounded-[8px] bg-[var(--f-blue-3)] text-[#183f7b]">
@@ -1629,14 +2390,27 @@ function ReviewView({
 function ProgressView({
   progress,
   todayKey,
+  syncStatus,
+  accountEmail,
+  updatedAt,
   onExport,
-  onReset,
+  onImport,
+  onClearDevice,
+  onDeleteEverywhere,
 }: {
   progress: LearnerProgress;
   todayKey: string;
+  syncStatus: ReturnType<typeof useSyncedProgress>['status'];
+  accountEmail: string | null;
+  updatedAt: string | null;
   onExport: () => void;
-  onReset: () => void;
+  onImport: ReturnType<typeof useSyncedProgress>['importBackup'];
+  onClearDevice: () => void;
+  onDeleteEverywhere: () => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [pendingImport, setPendingImport] = useState<unknown>(null);
+  const [importStatus, setImportStatus] = useState('');
   const { current, best } = deriveStreaks(progress.completedDays, todayKey);
   const calendarDays = Array.from({ length: 35 }, (_, index) =>
     addCalendarDays(todayKey, index - 34),
@@ -1646,6 +2420,34 @@ function ProgressView({
     (record) => record.stage >= 4,
   ).length;
   const introduced = Object.keys(progress.reviews).length;
+
+  const readBackup = async (file: File | undefined) => {
+    if (!file) return;
+    setImportStatus('');
+    try {
+      setPendingImport(JSON.parse(await file.text()) as unknown);
+    } catch {
+      setImportStatus(
+        'That file is not valid JSON. Your progress was not changed.',
+      );
+    } finally {
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const finishImport = async (mode: 'merge' | 'replace') => {
+    const result = await onImport(pendingImport, mode);
+    if (result.ok) {
+      setPendingImport(null);
+      setImportStatus('Backup imported successfully.');
+    } else {
+      setImportStatus(
+        result.reason === 'invalid'
+          ? 'That file is not a valid Salita progress backup.'
+          : 'Import is unavailable right now. Your progress was not changed.',
+      );
+    }
+  };
 
   return (
     <section>
@@ -1853,9 +2655,16 @@ function ProgressView({
           <p className="text-xs font-black uppercase tracking-[0.12em] text-muted-foreground">
             Your data
           </p>
-          <h2 className="mt-1 text-xl font-black">Stored on this device</h2>
+          <h2 className="mt-1 text-xl font-black">
+            {accountEmail ? 'Synced to your account' : 'Stored on this device'}
+          </h2>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
-            Export a backup anytime. Reset only affects this browser.
+            {accountEmail
+              ? `${accountEmail} · ${syncStatus === 'saving' ? 'saving now' : syncStatus === 'saved' ? 'saved' : 'changes queued on this device'}.`
+              : 'Sign in through the published app to sync. Export a portable backup anytime.'}
+            {updatedAt
+              ? ` Last cloud update ${new Intl.DateTimeFormat('en-US', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(updatedAt))}.`
+              : ''}
           </p>
           <div className="mt-5 flex flex-wrap gap-3">
             <Button
@@ -1865,49 +2674,490 @@ function ProgressView({
             >
               <Download /> Export progress
             </Button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="sr-only"
+              onChange={(event) => void readBackup(event.target.files?.[0])}
+            />
             <Button
-              variant="destructive"
-              onClick={onReset}
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
               className="min-h-11 rounded-[5px] font-black"
             >
-              <Trash2 /> Reset
+              <Upload /> Import backup
             </Button>
+            <Button
+              variant="outline"
+              onClick={onClearDevice}
+              className="min-h-11 rounded-[5px] font-black"
+            >
+              <Smartphone /> Clear this device
+            </Button>
+            {accountEmail && (
+              <Button
+                variant="destructive"
+                onClick={onDeleteEverywhere}
+                className="min-h-11 rounded-[5px] font-black"
+              >
+                <Trash2 /> Delete everywhere
+              </Button>
+            )}
           </div>
+          {pendingImport !== null && (
+            <div className="mt-4 rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-sm text-[#5c4a00]">
+              <p className="font-black">
+                How should Salita import this backup?
+              </p>
+              <p className="mt-1 leading-5">
+                Merge preserves both histories where possible. Replace starts
+                from the backup and archives the current generation.
+              </p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => void finishImport('merge')}
+                  className="min-h-10 rounded-[5px] bg-white font-black"
+                >
+                  Merge
+                </Button>
+                <Button
+                  variant="destructive"
+                  onClick={() => void finishImport('replace')}
+                  className="min-h-10 rounded-[5px] font-black"
+                >
+                  Replace
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => setPendingImport(null)}
+                  className="min-h-10 rounded-[5px] font-black"
+                >
+                  Cancel
+                </Button>
+              </div>
+            </div>
+          )}
+          {importStatus && (
+            <p className="mt-4 text-sm font-bold" aria-live="polite">
+              {importStatus}
+            </p>
+          )}
         </section>
       </div>
+
+      <section className="mt-6 rounded-[16px] border border-border bg-card p-5 sm:p-6">
+        <div className="flex items-start gap-4">
+          <span className="grid size-11 shrink-0 place-items-center rounded-[8px] bg-[var(--f-blue-3)] text-[#183f7b]">
+            <Smartphone className="size-5" />
+          </span>
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-muted-foreground">
+              iPhone app
+            </p>
+            <h2 className="mt-1 text-xl font-black">
+              Add Salita to Home Screen
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-muted-foreground">
+              Open the published Salita link in Safari, tap Share, choose “Add
+              to Home Screen,” then tap Add. It opens like an app and uses this
+              same account progress. Allow microphone access the first time a
+              speaking exercise asks for it.
+            </p>
+            <div className="mt-4 flex items-center gap-2 text-xs font-black text-[#183f7b]">
+              <Cloud className="size-4" /> Account sync carries desktop work to
+              iPhone and back.
+            </div>
+          </div>
+        </div>
+      </section>
     </section>
+  );
+}
+
+function VocabularyMatchGame({
+  unit,
+  progress,
+  sessionId,
+  onAttempt,
+  onExit,
+  onFinish,
+}: {
+  unit: Unit;
+  progress: LearnerProgress;
+  sessionId: string;
+  onAttempt: (
+    sessionId: string,
+    reviewKey: string,
+    outcome: AttemptOutcome,
+  ) => number;
+  onExit: () => void;
+  onFinish: (summary: {
+    xp: number;
+    firstTryCorrect: number;
+    prompts: number;
+    minutes: number;
+    modes: SkillMode[];
+    kind: ActivityKind;
+  }) => void;
+}) {
+  const words = useMemo(
+    () =>
+      getUnitVocabulary(unit.id).slice(
+        0,
+        introducedVocabularyCount(progress, unit),
+      ),
+    [progress, unit],
+  );
+  const filipinoOrder = useMemo(
+    () => seededShuffle(words, `${sessionId}:fil`),
+    [sessionId, words],
+  );
+  const englishOrder = useMemo(() => {
+    const shuffled = seededShuffle(words, `${sessionId}:en`);
+    if (shuffled.length < 2) return shuffled;
+    for (let shift = 0; shift < shuffled.length; shift += 1) {
+      const rotated = [...shuffled.slice(shift), ...shuffled.slice(0, shift)];
+      if (rotated.every((word, index) => word.id !== filipinoOrder[index]?.id))
+        return rotated;
+    }
+    return [...shuffled.slice(1), shuffled[0]];
+  }, [filipinoOrder, sessionId, words]);
+  const [selectedFil, setSelectedFil] = useState('');
+  const [selectedEn, setSelectedEn] = useState('');
+  const [matched, setMatched] = useState<Set<string>>(new Set());
+  const [missed, setMissed] = useState<Set<string>>(new Set());
+  const [firstTryCorrect, setFirstTryCorrect] = useState(0);
+  const [sessionXp, setSessionXp] = useState(0);
+  const [status, setStatus] = useState(
+    'Choose one Tagalog word and one English meaning.',
+  );
+  const startedAtRef = useRef(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const matchedRef = useRef(new Set<string>());
+  const matchingLockRef = useRef(new Set<string>());
+  const finishedRef = useRef(false);
+  const filipinoButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+  const completionHeadingRef = useRef<HTMLHeadingElement | null>(null);
+
+  useEffect(() => {
+    startedAtRef.current = Date.now();
+  }, []);
+
+  const evaluatePair = (filId: string, enId: string) => {
+    const word = words.find((candidate) => candidate.id === filId);
+    if (
+      !word ||
+      matchedRef.current.has(word.id) ||
+      matchingLockRef.current.has(word.id)
+    )
+      return;
+    matchingLockRef.current.add(word.id);
+    const reviewKey = `${unit.id}-vocab-${word.id}:reading`;
+    if (word.id === enId) {
+      const wasMissed = missed.has(word.id);
+      const points = onAttempt(
+        sessionId,
+        reviewKey,
+        wasMissed ? 'retry-correct' : 'first-correct',
+      );
+      setSessionXp((value) => value + points);
+      if (!wasMissed) setFirstTryCorrect((value) => value + 1);
+      matchedRef.current.add(word.id);
+      setMatched((current) => new Set(current).add(word.id));
+      const remaining = words.length - matchedRef.current.size;
+      setStatus(
+        `Tama — “${word.fil}” means “${word.en}.” ${remaining ? `${remaining} pair${remaining === 1 ? '' : 's'} remaining.` : 'Round complete.'}`,
+      );
+      const nextWord = filipinoOrder.find(
+        (candidate) => !matchedRef.current.has(candidate.id),
+      );
+      if (nextWord) {
+        window.setTimeout(
+          () => filipinoButtonRefs.current.get(nextWord.id)?.focus(),
+          0,
+        );
+      }
+      if (matchedRef.current.size === words.length && !finishedRef.current) {
+        finishedRef.current = true;
+        onFinish({
+          xp: sessionXp + points,
+          firstTryCorrect: firstTryCorrect + (wasMissed ? 0 : 1),
+          prompts: words.length,
+          minutes: elapsedMinutesSince(startedAtRef.current),
+          modes: ['reading'],
+          kind: 'vocab-match',
+        });
+      }
+    } else {
+      onAttempt(sessionId, reviewKey, 'wrong');
+      setMissed((current) => new Set(current).add(word.id));
+      setStatus('Not a match yet. Both cards are still available—try again.');
+      window.setTimeout(() => {
+        matchingLockRef.current.delete(word.id);
+        filipinoButtonRefs.current.get(word.id)?.focus();
+      }, 0);
+    }
+    setSelectedFil('');
+    setSelectedEn('');
+  };
+
+  const selectFilipino = (wordId: string) => {
+    if (selectedEn) evaluatePair(wordId, selectedEn);
+    else setSelectedFil(wordId);
+  };
+
+  const selectEnglish = (wordId: string) => {
+    if (selectedFil) evaluatePair(selectedFil, wordId);
+    else setSelectedEn(wordId);
+  };
+
+  const complete = words.length > 0 && matched.size === words.length;
+
+  useEffect(() => {
+    if (!complete) return;
+    const timeout = window.setTimeout(
+      () => completionHeadingRef.current?.focus(),
+      0,
+    );
+    return () => window.clearTimeout(timeout);
+  }, [complete]);
+
+  useEffect(
+    () => () => {
+      audioRef.current?.pause();
+    },
+    [],
+  );
+
+  const playWord = (word: VocabularyItem) => {
+    audioRef.current?.pause();
+    const query = new URLSearchParams({ text: word.fil, speed: 'normal' });
+    const audio = new Audio(`/api/speech?${query}`);
+    audioRef.current = audio;
+    setStatus(`Playing “${word.fil}”…`);
+    audio.onended = () => setStatus(`Now match “${word.fil}.”`);
+    audio.onerror = () =>
+      setStatus(
+        'Audio is temporarily unavailable. You can keep matching by text.',
+      );
+    void audio
+      .play()
+      .catch(() =>
+        setStatus(
+          'Tap the speaker once more if your iPhone paused audio playback.',
+        ),
+      );
+  };
+
+  if (complete) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-background px-5 py-10 text-foreground">
+        <section className="w-full max-w-xl rounded-[24px] border border-border bg-card p-7 text-center shadow-[0_4px_20px_rgba(25,1,52,0.14)] sm:p-10">
+          <span className="mx-auto grid size-16 place-items-center rounded-full bg-[var(--f-green-1)] text-[var(--f-green-4)]">
+            <CheckCircle2 className="size-7" />
+          </span>
+          <p className="mt-5 text-xs font-black uppercase tracking-[0.14em] text-[#9c0040]">
+            Quick Match
+          </p>
+          <h1
+            ref={completionHeadingRef}
+            tabIndex={-1}
+            className="mt-2 text-3xl font-black focus:outline-none"
+          >
+            All {words.length} pairs matched
+          </h1>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            Missed pairs are now in Practice mistakes, so they will return
+            instead of disappearing after this round.
+          </p>
+          <div className="mt-6 grid grid-cols-3 gap-3">
+            <SummaryStat value={`+${sessionXp}`} label="XP" />
+            <SummaryStat
+              value={`${firstTryCorrect}/${words.length}`}
+              label="first try"
+            />
+            <SummaryStat value={`${missed.size}`} label="to repair" />
+          </div>
+          <Button
+            onClick={onExit}
+            className="mt-7 min-h-12 w-full rounded-[5px] bg-primary font-black text-black hover:bg-[var(--f-pink-light)]"
+          >
+            Done <ArrowRight />
+          </Button>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-dvh bg-background text-foreground">
+      <header className="border-b border-border bg-card">
+        <div className="mx-auto flex min-h-18 max-w-4xl items-center gap-4 px-5 py-3">
+          <Button
+            variant="ghost"
+            size="icon-lg"
+            onClick={onExit}
+            className="size-11 rounded-full"
+            aria-label="Exit vocabulary match"
+          >
+            <X className="size-5" />
+          </Button>
+          <div className="flex-1">
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#9c0040]">
+              Unit {unit.number} · Quick Match
+            </p>
+            <p className="mt-0.5 font-black">{unit.title}</p>
+          </div>
+          <span className="text-sm font-black text-muted-foreground">
+            {matched.size}/{words.length}
+          </span>
+        </div>
+      </header>
+      <div className="mx-auto max-w-4xl px-5 py-8 sm:py-10">
+        <h1 className="text-2xl font-black tracking-[-0.035em] sm:text-3xl">
+          Match each word to its meaning.
+        </h1>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          Tap a speaker for Filipino audio. Tap-select works with touch,
+          keyboard, and assistive technology—no dragging required.
+        </p>
+        <div className="mt-8 grid grid-cols-2 gap-4 sm:gap-8">
+          <fieldset className="space-y-3">
+            <legend className="sr-only">Tagalog words</legend>
+            {filipinoOrder.map((word) => {
+              const done = matched.has(word.id);
+              return (
+                <div
+                  key={word.id}
+                  className={`flex min-h-16 items-stretch overflow-hidden rounded-[8px] border ${
+                    done
+                      ? 'border-[var(--f-success-strong)] bg-[var(--f-green-1)] opacity-55'
+                      : selectedFil === word.id
+                        ? 'border-[#3174d2] bg-[var(--f-blue-3)]'
+                        : 'border-border bg-card'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    ref={(node) => {
+                      if (node) filipinoButtonRefs.current.set(word.id, node);
+                      else filipinoButtonRefs.current.delete(word.id);
+                    }}
+                    disabled={done}
+                    onClick={() => selectFilipino(word.id)}
+                    aria-pressed={selectedFil === word.id}
+                    className="min-w-0 flex-1 px-3 text-left text-sm font-black focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-ring sm:text-base"
+                  >
+                    <span lang="fil">{word.fil}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={done}
+                    onClick={() => playWord(word)}
+                    className="grid w-11 shrink-0 place-items-center border-l border-current/10 focus-visible:outline-3 focus-visible:outline-offset-[-3px] focus-visible:outline-ring"
+                  >
+                    <span className="sr-only">Hear </span>
+                    <span lang="fil" className="sr-only">
+                      {word.fil}
+                    </span>
+                    <Volume2 className="size-4" aria-hidden="true" />
+                  </button>
+                </div>
+              );
+            })}
+          </fieldset>
+          <fieldset className="space-y-3">
+            <legend className="sr-only">English meanings</legend>
+            {englishOrder.map((word) => {
+              const done = matched.has(word.id);
+              return (
+                <button
+                  key={word.id}
+                  type="button"
+                  disabled={done}
+                  onClick={() => selectEnglish(word.id)}
+                  aria-pressed={selectedEn === word.id}
+                  aria-label={`${word.en}${done ? ', matched' : ''}`}
+                  className={`min-h-16 w-full rounded-[8px] border px-3 text-left text-sm font-black focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring sm:text-base ${
+                    done
+                      ? 'border-[var(--f-success-strong)] bg-[var(--f-green-1)] opacity-55'
+                      : selectedEn === word.id
+                        ? 'border-[#3174d2] bg-[var(--f-blue-3)]'
+                        : 'border-border bg-card'
+                  }`}
+                >
+                  {word.en}
+                </button>
+              );
+            })}
+          </fieldset>
+        </div>
+        <output
+          aria-live="polite"
+          className="mt-6 block rounded-[8px] bg-muted p-4 text-sm font-bold"
+        >
+          {status}
+        </output>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Matching {words.length} words already introduced in this unit.
+        </p>
+      </div>
+    </main>
   );
 }
 
 function LessonExperience({
   unit,
+  lesson,
+  sessionId,
   reviewMode,
+  mistakesMode,
+  replayMode,
+  priorityReviewKey,
   progress,
-  setProgress,
+  onReviewAttempt,
   onExit,
   onFinish,
   onNext,
 }: {
   unit: Unit;
+  lesson: CourseLesson;
+  sessionId: string;
   reviewMode: boolean;
+  mistakesMode: boolean;
+  replayMode: boolean;
+  priorityReviewKey?: string;
   progress: LearnerProgress;
-  setProgress: React.Dispatch<React.SetStateAction<LearnerProgress>>;
+  onReviewAttempt: (
+    sessionId: string,
+    reviewKey: string,
+    outcome: AttemptOutcome,
+  ) => number;
   onExit: () => void;
   onFinish: (
     unit: Unit,
+    lesson: CourseLesson,
+    sessionId: string,
     summary: {
       xp: number;
       firstTryCorrect: number;
       prompts: number;
       minutes: number;
       modes: SkillMode[];
-      kind: 'lesson' | 'review';
+      kind: ActivityKind;
+      sourceUnitIds?: string[];
     },
   ) => void;
-  onNext: (unitId: string) => void;
+  onNext: (unitId: string, lessonId: string) => void;
 }) {
   const [initialExercises] = useState<Exercise[]>(() =>
-    reviewMode ? buildReviewLesson(unit, progress) : buildLesson(unit),
+    reviewMode
+      ? buildReviewLesson(unit, progress, false, priorityReviewKey)
+      : mistakesMode
+        ? buildReviewLesson(unit, progress, true)
+        : buildLesson(unit, lesson),
   );
   const [queue, setQueue] = useState<Exercise[]>(initialExercises);
   const [index, setIndex] = useState(0);
@@ -1930,15 +3180,21 @@ function LessonExperience({
   const streamRef = useRef<MediaStream | null>(null);
   const recordingRequestIdRef = useRef(0);
   const recordingPendingRef = useRef(false);
+  const recordingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
   const modelAudioRef = useRef<HTMLAudioElement | null>(null);
   const speechRequestRef = useRef<AbortController | null>(null);
-  const audioCacheRef = useRef<Map<string, string>>(new Map());
-  const cloudVoiceUnavailableRef = useRef(false);
   const playbackIdRef = useRef(0);
   const startedAtRef = useRef(0);
+  const answerSubmissionRef = useRef(false);
+  const continueSubmissionRef = useRef(false);
+  const lessonFinishedRef = useRef(false);
   const stopPlaybackAndRecordingForMic = useCallback(() => {
     recordingRequestIdRef.current += 1;
     recordingPendingRef.current = false;
+    if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+    recordingTimeoutRef.current = null;
     playbackIdRef.current += 1;
     speechRequestRef.current?.abort();
     speechRequestRef.current = null;
@@ -1973,14 +3229,19 @@ function LessonExperience({
     onBeforeStart: stopPlaybackAndRecordingForMic,
   });
   const exercise = queue[index];
-  const totalNewPrompts = initialExercises.length;
+  const totalScoredPrompts = Math.max(
+    1,
+    initialExercises.filter((item) => item.kind !== 'vocabulary').length,
+  );
 
   useEffect(() => {
     startedAtRef.current = Date.now();
-    const audioCache = audioCacheRef.current;
     return () => {
       recordingRequestIdRef.current += 1;
       recordingPendingRef.current = false;
+      if (recordingTimeoutRef.current)
+        clearTimeout(recordingTimeoutRef.current);
+      recordingTimeoutRef.current = null;
       const recorder = recorderRef.current;
       if (recorder) {
         recorder.ondataavailable = null;
@@ -1997,10 +3258,6 @@ function LessonExperience({
       streamRef.current?.getTracks().forEach((track) => track.stop());
       speechRequestRef.current?.abort();
       modelAudioRef.current?.pause();
-      for (const url of audioCache.values()) {
-        URL.revokeObjectURL(url);
-      }
-      audioCache.clear();
       window.speechSynthesis?.cancel();
     };
   }, []);
@@ -2012,6 +3269,8 @@ function LessonExperience({
   }, [recordedUrl]);
 
   const resetPromptState = () => {
+    answerSubmissionRef.current = false;
+    continueSubmissionRef.current = false;
     setSelected('');
     setTyped('');
     setChosenTiles([]);
@@ -2027,6 +3286,8 @@ function LessonExperience({
     setSpeechFallbackChosen(false);
     recordingRequestIdRef.current += 1;
     recordingPendingRef.current = false;
+    if (recordingTimeoutRef.current) clearTimeout(recordingTimeoutRef.current);
+    recordingTimeoutRef.current = null;
     playbackIdRef.current += 1;
     speechRequestRef.current?.abort();
     speechRequestRef.current = null;
@@ -2120,97 +3381,42 @@ function LessonExperience({
     const fallBackToDeviceVoice = () => {
       if (playDeviceVoice(text, slow)) return;
       setVoiceStatus(
-        cloudVoiceUnavailableRef.current
-          ? 'Filipino audio needs its Azure connection. The transcript is available for now.'
-          : 'Filipino audio is temporarily unavailable. Please try again.',
+        'Filipino audio is temporarily unavailable. The transcript is available and your lesson can continue.',
       );
       revealIfNeeded();
     };
-    const cacheKey = `${slow ? 'slow' : 'normal'}:${text}`;
-    const playAudioUrl = async (url: string) => {
-      if (playbackId !== playbackIdRef.current) return;
-      const audio = new Audio(url);
-      modelAudioRef.current = audio;
-      audio.onplay = () => {
-        if (playbackId === playbackIdRef.current) {
-          setVoiceStatus(
-            slow
-              ? 'Playing the Filipino neural voice slowly…'
-              : 'Playing the Filipino neural voice…',
-          );
-        }
-      };
-      audio.onended = () => {
-        if (playbackId === playbackIdRef.current) {
-          setVoiceStatus(
-            'Ready to replay. Tap any underlined Tagalog word to hear it.',
-          );
-        }
-      };
-      audio.onerror = () => {
-        if (playbackId === playbackIdRef.current) fallBackToDeviceVoice();
-      };
-      try {
-        await audio.play();
-      } catch {
-        if (playbackId === playbackIdRef.current) {
-          setVoiceStatus(
-            'Audio is ready. Tap the word or phrase once more to play it.',
-          );
-        }
+    setVoiceStatus('Loading the Filipino neural voice…');
+    const query = new URLSearchParams({
+      text,
+      speed: slow ? 'slow' : 'normal',
+    });
+    const audio = new Audio(`/api/speech?${query}`);
+    audio.preload = 'auto';
+    modelAudioRef.current = audio;
+    audio.onplay = () => {
+      if (playbackId === playbackIdRef.current) {
+        setVoiceStatus(
+          slow
+            ? 'Playing the Filipino neural voice slowly…'
+            : 'Playing the Filipino neural voice…',
+        );
       }
     };
-
-    const cachedUrl = audioCacheRef.current.get(cacheKey);
-    if (cachedUrl) {
-      await playAudioUrl(cachedUrl);
-      return;
-    }
-
-    if (cloudVoiceUnavailableRef.current) {
-      fallBackToDeviceVoice();
-      return;
-    }
-
-    const controller = new AbortController();
-    speechRequestRef.current = controller;
-    setVoiceStatus('Loading the Filipino neural voice…');
-
-    try {
-      const query = new URLSearchParams({
-        text,
-        speed: slow ? 'slow' : 'normal',
-      });
-      const response = await fetch(`/api/speech?${query}`, {
-        headers: { Accept: 'audio/mpeg' },
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const problem = (await response.json().catch(() => null)) as {
-          code?: string;
-        } | null;
-        if (problem?.code === 'VOICE_NOT_CONFIGURED') {
-          cloudVoiceUnavailableRef.current = true;
-        }
-        if (playbackId === playbackIdRef.current) fallBackToDeviceVoice();
-        return;
+    audio.onended = () => {
+      if (playbackId === playbackIdRef.current) {
+        setVoiceStatus(
+          'Ready to replay. Tap any underlined Tagalog word to hear it.',
+        );
       }
-
-      const audioBlob = await response.blob();
-      if (!audioBlob.type.startsWith('audio/')) {
-        if (playbackId === playbackIdRef.current) fallBackToDeviceVoice();
-        return;
-      }
-      const audioUrl = URL.createObjectURL(audioBlob);
-      audioCacheRef.current.set(cacheKey, audioUrl);
-      await playAudioUrl(audioUrl);
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
+    };
+    audio.onerror = () => {
       if (playbackId === playbackIdRef.current) fallBackToDeviceVoice();
-    } finally {
-      if (speechRequestRef.current === controller) {
-        speechRequestRef.current = null;
+    };
+    try {
+      await audio.play();
+    } catch {
+      if (playbackId === playbackIdRef.current) {
+        setVoiceStatus('Tap the word or phrase once more to start audio.');
       }
     }
   };
@@ -2255,6 +3461,12 @@ function LessonExperience({
       );
       return;
     }
+    if (!window.isSecureContext) {
+      setVoiceStatus(
+        'Recording needs a secure HTTPS connection. Open the published Salita site to use the microphone.',
+      );
+      return;
+    }
     recordingRequestIdRef.current += 1;
     const recordingRequestId = recordingRequestIdRef.current;
     recordingPendingRef.current = true;
@@ -2270,8 +3482,35 @@ function LessonExperience({
     });
     setRecordingPending(true);
     setVoiceStatus('Waiting for microphone permission…');
+    let permissionTimeout: ReturnType<typeof setTimeout> | null = null;
+    let permissionTimedOut = false;
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRequest = navigator.mediaDevices.getUserMedia({
+        audio: {
+          autoGainControl: true,
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
+      void mediaRequest.then((lateStream) => {
+        if (
+          permissionTimedOut ||
+          recordingRequestId !== recordingRequestIdRef.current
+        ) {
+          lateStream.getTracks().forEach((track) => track.stop());
+        }
+      });
+      const stream = await Promise.race([
+        mediaRequest,
+        new Promise<never>((_, reject) => {
+          permissionTimeout = setTimeout(() => {
+            permissionTimedOut = true;
+            reject(new DOMException('Permission timed out.', 'AbortError'));
+          }, 15_000);
+        }),
+      ]);
+      if (permissionTimeout) clearTimeout(permissionTimeout);
       if (recordingRequestId !== recordingRequestIdRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -2279,12 +3518,23 @@ function LessonExperience({
       recordingPendingRef.current = false;
       setRecordingPending(false);
       streamRef.current = stream;
-      const recorder = new MediaRecorder(stream);
+      const supportedMimeType = [
+        'audio/mp4',
+        'audio/webm;codecs=opus',
+        'audio/webm',
+      ].find((type) => MediaRecorder.isTypeSupported(type));
+      const recorder = new MediaRecorder(
+        stream,
+        supportedMimeType ? { mimeType: supportedMimeType } : undefined,
+      );
       const chunks: BlobPart[] = [];
       recorder.ondataavailable = (event) => {
         if (event.data.size) chunks.push(event.data);
       };
       recorder.onstop = () => {
+        if (recordingTimeoutRef.current)
+          clearTimeout(recordingTimeoutRef.current);
+        recordingTimeoutRef.current = null;
         const blob = new Blob(chunks, {
           type: recorder.mimeType || 'audio/webm',
         });
@@ -2299,6 +3549,9 @@ function LessonExperience({
         );
       };
       recorder.onerror = () => {
+        if (recordingTimeoutRef.current)
+          clearTimeout(recordingTimeoutRef.current);
+        recordingTimeoutRef.current = null;
         stream.getTracks().forEach((track) => track.stop());
         streamRef.current = null;
         recorderRef.current = null;
@@ -2309,9 +3562,13 @@ function LessonExperience({
       };
       recorderRef.current = recorder;
       recorder.start();
+      recordingTimeoutRef.current = setTimeout(() => {
+        if (recorder.state !== 'inactive') recorder.stop();
+      }, 30_000);
       setRecording(true);
       setVoiceStatus('Recording… Tap stop when you’re done. Nothing is saved.');
     } catch {
+      if (permissionTimeout) clearTimeout(permissionTimeout);
       if (recordingRequestId !== recordingRequestIdRef.current) return;
       recordingPendingRef.current = false;
       streamRef.current?.getTracks().forEach((track) => track.stop());
@@ -2320,7 +3577,9 @@ function LessonExperience({
       setRecording(false);
       setRecordingPending(false);
       setVoiceStatus(
-        'Microphone permission was not available. Practice aloud or type instead—your lesson still counts.',
+        permissionTimedOut
+          ? 'Microphone permission took too long. Check this site’s microphone setting, then try again.'
+          : 'Microphone permission was not available. Practice aloud or type instead—your lesson still counts.',
       );
     }
   };
@@ -2329,12 +3588,14 @@ function LessonExperience({
     if (
       !exercise ||
       feedback ||
+      answerSubmissionRef.current ||
       speechCoach.busy ||
       recording ||
       recordingPending
     ) {
       return;
     }
+    answerSubmissionRef.current = true;
     const answer =
       exercise.kind === 'arrange'
         ? arrangedAnswer
@@ -2372,26 +3633,8 @@ function LessonExperience({
           (speechCoach.state.bestAttemptByLanguage['fil-PH'] ?? 1) > 1),
       hintUsed: hintUsedRef.current,
     });
-    const today = localDateKey();
     const reviewKey = `${exercise.baseId}:${exercise.skill}`;
-    const existingRecord = progress.reviews[reviewKey];
-    const eligibleForCredit = isReviewDue(existingRecord, today);
-    const creditedPoints = eligibleForCredit ? score.points : 0;
-
-    setProgress((current) => {
-      const currentRecord = current.reviews[reviewKey];
-      const isDue = isReviewDue(currentRecord, today);
-      return {
-        ...current,
-        xp: current.xp + (isDue ? score.points : 0),
-        reviews: isDue
-          ? {
-              ...current.reviews,
-              [reviewKey]: updateReview(currentRecord, score.outcome, today),
-            }
-          : current.reviews,
-      };
-    });
+    const creditedPoints = onReviewAttempt(sessionId, reviewKey, score.outcome);
     setSessionXp((value) => value + creditedPoints);
 
     if (score.firstTryCorrect) {
@@ -2431,18 +3674,40 @@ function LessonExperience({
   };
 
   const continueLesson = () => {
-    if (speechCoach.busy || recording || recordingPending) return;
+    if (
+      speechCoach.busy ||
+      recording ||
+      recordingPending ||
+      continueSubmissionRef.current
+    )
+      return;
+    continueSubmissionRef.current = true;
     if (index + 1 >= queue.length) {
-      onFinish(unit, {
+      if (lessonFinishedRef.current) return;
+      lessonFinishedRef.current = true;
+      onFinish(unit, lesson, sessionId, {
         xp: sessionXp,
         firstTryCorrect,
-        prompts: totalNewPrompts,
-        minutes: Math.max(
-          1,
-          Math.round((Date.now() - startedAtRef.current) / 60_000),
-        ),
+        prompts: totalScoredPrompts,
+        minutes: elapsedMinutesSince(startedAtRef.current),
         modes: [...new Set(initialExercises.map((item) => item.skill))],
-        kind: reviewMode ? 'review' : 'lesson',
+        kind:
+          reviewMode || replayMode
+            ? 'review'
+            : mistakesMode
+              ? 'mistakes'
+              : 'lesson',
+        sourceUnitIds:
+          reviewMode || mistakesMode
+            ? [
+                ...new Set(
+                  initialExercises.flatMap((item) => {
+                    const source = findReviewTarget(item.baseId);
+                    return source ? [source.unit.id] : [];
+                  }),
+                ),
+              ]
+            : undefined,
       });
       setComplete(true);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -2477,8 +3742,8 @@ function LessonExperience({
   }
 
   if (complete) {
-    const next = nextUnitAfter(unit.id);
-    const accuracy = Math.round((firstTryCorrect / totalNewPrompts) * 100);
+    const next = nextLessonAfter(unit.id, lesson.id);
+    const accuracy = Math.round((firstTryCorrect / totalScoredPrompts) * 100);
     const { current } = deriveStreaks(
       [...progress.completedDays, localDateKey()],
       localDateKey(),
@@ -2496,12 +3761,22 @@ function LessonExperience({
             Tapos na!
           </p>
           <h1 className="mt-2 text-3xl font-black tracking-[-0.045em]">
-            {reviewMode ? 'Review complete' : 'Lesson complete'}
+            {reviewMode
+              ? 'Review complete'
+              : replayMode
+                ? 'Practice replay complete'
+                : mistakesMode
+                  ? 'Mistake practice complete'
+                  : 'Lesson complete'}
           </h1>
           <p className="mt-3 text-sm leading-6 text-muted-foreground">
             {reviewMode
               ? 'You brought due language skills back at the right time.'
-              : 'You practiced sounds, grammar, listening, reading, and speaking in context.'}
+              : replayMode
+                ? 'You reinforced a completed lesson without changing your current place in the course.'
+                : mistakesMode
+                  ? 'You repaired difficult items. Two clean recalls on different days move each one out of the queue.'
+                  : `You finished “${lesson.title}.” The next lesson reuses familiar material before adding more.`}
           </p>
           <div className="mt-7 grid grid-cols-3 gap-3">
             <SummaryStat value={`+${sessionXp}`} label="XP" />
@@ -2512,7 +3787,11 @@ function LessonExperience({
             <p className="text-xs font-black uppercase tracking-[0.1em]">
               Practice focus
             </p>
-            <p className="mt-1 text-sm font-bold">{unit.description}</p>
+            <p className="mt-1 text-sm font-bold">
+              {reviewMode || mistakesMode
+                ? 'Mixed recall across every unit with an item due today.'
+                : unit.description}
+            </p>
           </div>
           <div className="mt-7 flex flex-col gap-3 sm:flex-row">
             <Button
@@ -2522,14 +3801,20 @@ function LessonExperience({
             >
               Back home
             </Button>
-            {!reviewMode && next.id !== unit.id && (
-              <Button
-                onClick={() => onNext(next.id)}
-                className="min-h-12 flex-1 rounded-[5px] bg-primary font-black text-black hover:bg-[var(--f-pink-light)]"
-              >
-                Next unit <ArrowRight />
-              </Button>
-            )}
+            {!reviewMode &&
+              !mistakesMode &&
+              !replayMode &&
+              !(
+                unit.id === units.at(-1)?.id && lesson.kind === 'checkpoint'
+              ) && (
+                <Button
+                  onClick={() => onNext(next.unit.id, next.lesson.id)}
+                  className="min-h-12 flex-1 rounded-[5px] bg-primary font-black text-black hover:bg-[var(--f-pink-light)]"
+                >
+                  {next.completedUnit ? 'Next unit' : 'Next lesson'}{' '}
+                  <ArrowRight />
+                </Button>
+              )}
           </div>
         </section>
       </main>
@@ -2564,7 +3849,7 @@ function LessonExperience({
           </Button>
           <Progress
             value={progressPercent}
-            aria-label={`Lesson progress: prompt ${index + 1} of ${queue.length}`}
+            aria-label={`${mistakesMode ? 'Mistake practice' : reviewMode ? 'Review' : lesson.title} progress: prompt ${index + 1} of ${queue.length}`}
             className="flex-1 [&_[data-slot=progress-track]]:h-2.5 [&_[data-slot=progress-indicator]]:bg-primary"
           />
           <span className="min-w-14 text-right text-xs font-black text-muted-foreground">
@@ -2652,7 +3937,7 @@ function LessonExperience({
           </output>
         )}
 
-        <div className="fixed inset-x-0 bottom-0 border-t border-border bg-card/96 px-5 py-4 backdrop-blur sm:static sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
+        <div className="fixed inset-x-0 bottom-0 border-t border-border bg-card/96 px-5 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:static sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
           <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
             <Button
               variant="ghost"
@@ -2662,7 +3947,14 @@ function LessonExperience({
             >
               <CircleHelp /> Hint
             </Button>
-            {feedback ? (
+            {exercise.kind === 'vocabulary' ? (
+              <Button
+                onClick={continueLesson}
+                className="min-h-12 min-w-36 rounded-[5px] bg-primary px-5 font-black text-black hover:bg-[var(--f-pink-light)]"
+              >
+                I’m ready <ArrowRight />
+              </Button>
+            ) : feedback ? (
               <Button
                 onClick={continueLesson}
                 disabled={speechCoach.busy || recording || recordingPending}
@@ -2875,6 +4167,71 @@ function ExerciseBody({
   onSelfAssess: () => void;
   onChooseSpeechFallback: () => void;
 }) {
+  if (exercise.kind === 'vocabulary') {
+    const introductionItems =
+      exercise.vocabularyItems ?? exercise.phraseItems ?? [];
+    const introducesPhrases = Boolean(exercise.phraseItems);
+    return (
+      <>
+        <section className="rounded-[16px] border border-border bg-card p-5 sm:p-7">
+          <div className="flex items-start gap-3">
+            <span className="grid size-11 shrink-0 place-items-center rounded-[8px] bg-[var(--f-cyan-1)] text-[#005c83]">
+              <Languages className="size-5" />
+            </span>
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.1em] text-muted-foreground">
+                First encounter
+              </p>
+              <h2 className="mt-1 text-xl font-black">
+                {introducesPhrases
+                  ? 'Listen, read, then repeat each expression.'
+                  : 'Listen, read, then say each word.'}
+              </h2>
+            </div>
+          </div>
+          <div className="mt-5 grid gap-3 sm:grid-cols-2">
+            {introductionItems.map((word) => (
+              <article
+                key={word.id}
+                className="rounded-[8px] border border-border bg-muted p-4"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <SpeakableTagalog
+                      text={word.fil}
+                      onSpeak={playWord}
+                      className="text-lg font-black"
+                    />
+                    <p className="mt-1 text-sm font-bold text-foreground">
+                      {word.en}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void playPhrase(word.fil)}
+                    className="grid size-11 shrink-0 place-items-center rounded-full bg-card text-[#183f7b] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    aria-label={`Hear ${word.fil}`}
+                  >
+                    <Volume2 className="size-4" />
+                  </button>
+                </div>
+                <p className="mt-3 text-xs leading-5 text-muted-foreground">
+                  {word.note}
+                </p>
+              </article>
+            ))}
+          </div>
+          <p className="mt-4 rounded-[8px] bg-[var(--f-yellow-1)] p-3 text-xs font-bold leading-5 text-[#5c4a00]">
+            {introducesPhrases
+              ? 'Repeat each expression once. You will retrieve these expressions later, after this first encounter.'
+              : 'Say each word once. Salita will ask you to retrieve each one in a later practice step before it enters spaced review.'}
+          </p>
+        </section>
+        {showTranscript && <LearningHint text={exercise.note} />}
+      </>
+    );
+  }
+
   if (exercise.kind === 'pronunciation') {
     return (
       <>
