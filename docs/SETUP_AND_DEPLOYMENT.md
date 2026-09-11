@@ -143,7 +143,7 @@ Review the generated SQL. Drizzle does not generate Salita's hand-reviewed SQLit
 
 The Site injects `oai-authenticated-user-id`; Salita treats that opaque value as the sole ownership key and never trusts email for authorization. The displayed email is request metadata only and is not stored in learning tables or exports. A separately hosted deployment must have a trusted authentication proxy that strips any client-supplied copies of these headers and injects its own. Without that trust boundary, leave account sync unavailable rather than accepting forgeable identity headers.
 
-Local `npm run dev` normally receives no hosted identity and therefore uses `salita-progress-v1` device-only storage. Test true cross-device sync only on an authenticated preview or production Site with a managed D1 binding.
+The default `npm run dev` session receives no hosted identity and therefore uses `salita-progress-v1` device-only storage. The Sites Vite plugin exposes `/signin-with-chatgpt?return_to=/` to simulate a stable local identity and exercise the development D1 database. That is useful for protocol rehearsal, but test real ChatGPT identity, hosting access policy, and cross-device managed-D1 sync only on an authenticated preview or production Site.
 
 ## Create an Azure Speech Free (F0) resource
 

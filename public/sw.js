@@ -1,6 +1,7 @@
-const CACHE_NAME = 'salita-shell-v2';
+const CACHE_NAME = 'salita-shell-v3';
+const OFFLINE_URL = '/offline';
 const SHELL = [
-  '/offline.html',
+  OFFLINE_URL,
   '/manifest.webmanifest',
   '/favicon.svg',
   '/icon-192.png',
@@ -38,7 +39,7 @@ self.addEventListener('fetch', (event) => {
 
   if (request.mode === 'navigate') {
     event.respondWith(
-      fetch(request).catch(() => caches.match('/offline.html')),
+      fetch(request).catch(() => caches.match(OFFLINE_URL)),
     );
     return;
   }

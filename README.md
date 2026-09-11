@@ -40,7 +40,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open the local URL printed by the development server. The learning flow works without Azure credentials; cloud voices and microphone coaching require an Azure AI Speech resource configured in `.env.local`. Local development does not emulate hosted ChatGPT identity or managed D1 account sync.
+Open the local URL printed by the development server. The learning flow works without Azure credentials; cloud voices and microphone coaching require an Azure AI Speech resource configured in `.env.local`. The default localhost session is device-only. The Sites development plugin can simulate sign-in at `/signin-with-chatgpt?return_to=/` and exercise a development D1 database, but that rehearsal does not validate production ChatGPT identity or the live managed database.
 
 Run the release checks with:
 

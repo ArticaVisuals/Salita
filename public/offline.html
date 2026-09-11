@@ -19,13 +19,16 @@
         margin: 0;
         display: grid;
         place-items: center;
-        padding: max(24px, env(safe-area-inset-top)) 20px
-          max(24px, env(safe-area-inset-bottom));
+        padding: max(24px, env(safe-area-inset-top))
+          max(20px, env(safe-area-inset-right))
+          max(24px, env(safe-area-inset-bottom))
+          max(20px, env(safe-area-inset-left));
         box-sizing: border-box;
       }
       main {
         width: min(100%, 480px);
         padding: 32px;
+        box-sizing: border-box;
         border-radius: 24px;
         background: #fff;
         box-shadow: 0 4px 20px rgba(25, 1, 52, 0.14);

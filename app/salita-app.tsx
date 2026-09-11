@@ -841,6 +841,10 @@ export default function SalitaApp({
   initialTodayKey: string;
 }) {
   const [view, setView] = useState<View>('today');
+  const navigateToView = useCallback((nextView: View) => {
+    setView(nextView);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  }, []);
   const {
     progress,
     hydrated,
@@ -1111,11 +1115,11 @@ export default function SalitaApp({
       return;
     if (!(await clearThisDevice())) {
       window.alert(
-        'Salita still has unsynced work on this device. Reconnect and wait for “saved” before clearing it.',
+        'Resolve any yellow progress-choice card first. Otherwise, reconnect and wait for “saved” before clearing this device.',
       );
       return;
     }
-    setView('today');
+    navigateToView('today');
   };
 
   const deleteSyncedProgress = async () => {
@@ -1131,7 +1135,7 @@ export default function SalitaApp({
       )
     )
       return;
-    if (await deleteEverywhere()) setView('today');
+    if (await deleteEverywhere()) navigateToView('today');
   };
 
   const recordAttempt = useCallback(
@@ -1199,7 +1203,7 @@ export default function SalitaApp({
     <main className="min-h-dvh bg-background text-foreground">
       <AppHeader
         view={view}
-        onNavigate={setView}
+        onNavigate={navigateToView}
         progress={progress}
         todayKey={todayKey}
       />
@@ -1243,7 +1247,7 @@ export default function SalitaApp({
             progress={progress}
             todayKey={todayKey}
             onStart={startLesson}
-            onNavigate={setView}
+            onNavigate={navigateToView}
           />
         )}
         {view === 'learn' && (
@@ -1277,7 +1281,7 @@ export default function SalitaApp({
           />
         )}
       </div>
-      <MobileNav view={view} onNavigate={setView} />
+      <MobileNav view={view} onNavigate={navigateToView} />
     </main>
   );
 }
@@ -1301,15 +1305,26 @@ function SyncNotice({
           <div className="flex-1">
             <p className="font-black">Choose which progress to keep</p>
             <p className="mt-1 text-sm leading-5">
-              This browser has an older device-only history
-              {legacyConflict.belongsToAnotherAccount
-                ? ' that was linked to a different account'
-                : ''}
-              . A backup will be retained before it is changed.
+              {legacyConflict.source === 'stale-generation' ? (
+                <>
+                  This device has unsynced work from before your account
+                  progress was reset or replaced. A local backup stays here
+                  until you choose.
+                </>
+              ) : (
+                <>
+                  This browser has an older device-only history
+                  {legacyConflict.belongsToAnotherAccount
+                    ? ' that was linked to a different account'
+                    : ''}
+                  . A backup will be retained before it is changed.
+                </>
+              )}
             </p>
             <div className="mt-4 flex flex-wrap gap-2">
               <Button
                 variant="outline"
+                disabled={status === 'saving'}
                 onClick={() => void onResolve('keep-cloud')}
                 className="min-h-11 rounded-[5px] bg-white font-black"
               >
@@ -1317,12 +1332,14 @@ function SyncNotice({
               </Button>
               <Button
                 variant="outline"
+                disabled={status === 'saving'}
                 onClick={() => void onResolve('merge')}
                 className="min-h-11 rounded-[5px] bg-white font-black"
               >
                 Merge both
               </Button>
               <Button
+                disabled={status === 'saving'}
                 onClick={() => void onResolve('replace')}
                 className="min-h-11 rounded-[5px] bg-[#5c4a00] font-black text-white hover:bg-[#493b00]"
               >
@@ -1382,7 +1399,7 @@ function AppHeader({
       <div className="mx-auto flex h-18 max-w-6xl items-center justify-between gap-8 px-5 lg:px-8">
         <button
           onClick={() => onNavigate('today')}
-          className="flex items-center gap-2.5 no-underline"
+          className="flex min-h-11 items-center gap-2.5 no-underline"
           aria-label="Salita home"
         >
           <span className="grid size-9 place-items-center rounded-[8px] bg-primary text-black">
@@ -1446,7 +1463,7 @@ function MobileNav({
   return (
     <nav
       aria-label="Main navigation"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/96 px-2 pb-[max(10px,env(safe-area-inset-bottom))] pt-2 backdrop-blur lg:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/96 pb-[max(10px,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-2 backdrop-blur lg:hidden"
     >
       <div className="mx-auto flex max-w-md items-center justify-around">
         {NAV_ITEMS.map((item) => (
@@ -2411,6 +2428,7 @@ function ProgressView({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [pendingImport, setPendingImport] = useState<unknown>(null);
   const [importStatus, setImportStatus] = useState('');
+  const [isInstalledApp, setIsInstalledApp] = useState(false);
   const { current, best } = deriveStreaks(progress.completedDays, todayKey);
   const calendarDays = Array.from({ length: 35 }, (_, index) =>
     addCalendarDays(todayKey, index - 34),
@@ -2420,6 +2438,26 @@ function ProgressView({
     (record) => record.stage >= 4,
   ).length;
   const introduced = Object.keys(progress.reviews).length;
+
+  useEffect(() => {
+    const displayMode = window.matchMedia('(display-mode: standalone)');
+    const updateInstalledState = () => {
+      const navigatorWithStandalone = navigator as Navigator & {
+        standalone?: boolean;
+      };
+      setIsInstalledApp(
+        displayMode.matches || navigatorWithStandalone.standalone === true,
+      );
+    };
+    const handleInstalled = () => setIsInstalledApp(true);
+    updateInstalledState();
+    displayMode.addEventListener('change', updateInstalledState);
+    window.addEventListener('appinstalled', handleInstalled);
+    return () => {
+      displayMode.removeEventListener('change', updateInstalledState);
+      window.removeEventListener('appinstalled', handleInstalled);
+    };
+  }, []);
 
   const readBackup = async (file: File | undefined) => {
     if (!file) return;
@@ -2463,6 +2501,8 @@ function ProgressView({
           equals fluency.
         </p>
       </div>
+
+      <IPhoneInstallCard installed={isInstalledApp} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[
@@ -2746,32 +2786,52 @@ function ProgressView({
           )}
         </section>
       </div>
+    </section>
+  );
+}
 
-      <section className="mt-6 rounded-[16px] border border-border bg-card p-5 sm:p-6">
-        <div className="flex items-start gap-4">
-          <span className="grid size-11 shrink-0 place-items-center rounded-[8px] bg-[var(--f-blue-3)] text-[#183f7b]">
+function IPhoneInstallCard({ installed }: { installed: boolean }) {
+  return (
+    <section className="mb-6 rounded-[16px] border border-border bg-card p-5 sm:p-6">
+      <div className="flex items-start gap-4">
+        <span className="grid size-11 shrink-0 place-items-center rounded-[8px] bg-[var(--f-blue-3)] text-[#183f7b]">
+          {installed ? (
+            <CheckCircle2 className="size-5" />
+          ) : (
             <Smartphone className="size-5" />
-          </span>
-          <div>
-            <p className="text-xs font-black uppercase tracking-[0.12em] text-muted-foreground">
-              iPhone app
-            </p>
-            <h2 className="mt-1 text-xl font-black">
-              Add Salita to Home Screen
-            </h2>
+          )}
+        </span>
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.12em] text-muted-foreground">
+            iPhone app
+          </p>
+          <h2 className="mt-1 text-xl font-black">
+            {installed
+              ? 'Installed on this device'
+              : 'Add Salita to Home Screen'}
+          </h2>
+          {installed ? (
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
-              Open the published Salita link in Safari, tap Share, choose “Add
-              to Home Screen,” then tap Add. It opens like an app and uses this
-              same account progress. Allow microphone access the first time a
-              speaking exercise asks for it.
+              You are using the installed web app. Keep signing in with the same
+              account on iPhone and desktop so progress stays together.
             </p>
-            <div className="mt-4 flex items-center gap-2 text-xs font-black text-[#183f7b]">
-              <Cloud className="size-4" /> Account sync carries desktop work to
-              iPhone and back.
-            </div>
+          ) : (
+            <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm leading-6 text-muted-foreground">
+              <li>Open this published Salita link in Safari.</li>
+              <li>Tap Share, or tap More (…) and then Share.</li>
+              <li>Choose “Add to Home Screen.”</li>
+              <li>Turn on “Open as Web App,” then tap Add.</li>
+            </ol>
+          )}
+          <div className="mt-4 flex items-start gap-2 text-xs font-black leading-5 text-[#183f7b]">
+            <Cloud className="mt-0.5 size-4 shrink-0" />
+            <span>
+              Account sync carries desktop work to iPhone and back. Allow
+              microphone access when your first speaking exercise asks.
+            </span>
           </div>
         </div>
-      </section>
+      </div>
     </section>
   );
 }
@@ -3937,7 +3997,7 @@ function LessonExperience({
           </output>
         )}
 
-        <div className="fixed inset-x-0 bottom-0 border-t border-border bg-card/96 px-5 pb-[max(16px,env(safe-area-inset-bottom))] pt-4 backdrop-blur sm:static sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
+        <div className="fixed inset-x-0 bottom-0 border-t border-border bg-card/96 pb-[max(16px,env(safe-area-inset-bottom))] pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] pt-4 backdrop-blur sm:static sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
           <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
             <Button
               variant="ghost"

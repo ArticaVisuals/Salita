@@ -18,6 +18,17 @@ import {
   parseProgress,
   type LearnerProgress,
 } from '@/lib/progress';
+import {
+  RECOVERY_PREFIX,
+  compareProgressEvents,
+  combineProgressRecoveries,
+  persistProgressRecovery,
+  readPendingProgressRecoveries,
+  removeAllProgressRecoveriesForAccount,
+  removeProgressRecoveries,
+  type ProgressRecovery,
+  type RecoveryEventRef,
+} from '@/lib/progress-recovery';
 
 type SyncStatus =
   | 'loading'
@@ -38,13 +49,16 @@ type AccountState = {
 export type LegacyConflict = {
   progress: LearnerProgress;
   belongsToAnotherAccount: boolean;
+  source: 'legacy' | 'stale-generation';
+  recoveryKeys: string[];
+  recoveryGenerations: number[];
+  recoveryEvents: RecoveryEventRef[];
 };
 
 const LEGACY_OWNER_KEY = 'salita:legacy-owner:v1';
 const LEGACY_BACKUP_KEY = 'salita:legacy-backup:v1';
 const LAST_ACCOUNT_KEY = 'salita:last-account:v1';
 const ACCOUNT_PREFIX = 'salita:account:';
-const RECOVERY_PREFIX = 'salita:recovery:';
 
 type CachedAccount = {
   accountKey: string;
@@ -151,6 +165,28 @@ function accountEventKey(
   return `${accountEventPrefix(accountKey, generation)}${eventId}`;
 }
 
+function olderPendingGenerations(
+  storage: Storage | null,
+  accountKey: string,
+  currentGeneration: number,
+) {
+  const prefix = `${ACCOUNT_PREFIX}${accountKey}:generation:`;
+  const generations = new Set<number>();
+  for (const key of storageKeysStartingWith(storage, prefix)) {
+    const suffix = key.slice(prefix.length);
+    const match = /^(\d+):event:/u.exec(suffix);
+    const generation = match ? Number(match[1]) : Number.NaN;
+    if (
+      Number.isSafeInteger(generation) &&
+      generation >= 1 &&
+      generation < currentGeneration
+    ) {
+      generations.add(generation);
+    }
+  }
+  return [...generations].sort((a, b) => a - b);
+}
+
 function readPendingEvents(
   storage: Storage | null,
   accountKey: string,
@@ -177,11 +213,7 @@ function readPendingEvents(
       storageRemove(storage, key);
     }
   }
-  return events.sort(
-    (a, b) =>
-      a.clientSequence - b.clientSequence ||
-      a.occurredAt.localeCompare(b.occurredAt),
-  );
+  return events.sort(compareProgressEvents);
 }
 
 function readCachedBase(
@@ -269,41 +301,28 @@ function quarantinePendingGeneration(
   storage: Storage | null,
   accountKey: string,
   generation: number,
+  volatileEvents: ProgressEvent[] = [],
+  fallbackBaseProgress?: LearnerProgress,
 ) {
-  const pending = readPendingEvents(storage, accountKey, generation);
-  if (!pending.length) {
-    storageRemove(storage, accountBaseKey(accountKey, generation));
-    return null;
+  const durableEvents = readPendingEvents(storage, accountKey, generation);
+  const pending = new Map<string, ProgressEvent>();
+  for (const event of [...durableEvents, ...volatileEvents]) {
+    pending.set(event.id, event);
   }
+  if (!pending.size) return null;
   const cached = readCachedBase(storage, accountKey, generation);
-  const progress = applyEvents(
-    cached?.progress ?? createInitialProgress(),
-    pending,
-  );
-  try {
-    if (
-      !storageSet(
-        storage,
-        `${RECOVERY_PREFIX}${accountKey}:${generation}:${Date.now()}`,
-        JSON.stringify({
-          capturedAt: new Date().toISOString(),
-          accountKey,
-          generation,
-          progress,
-          events: pending,
-        }),
-      )
-    ) {
-      return progress;
+  const recovery = persistProgressRecovery(storage, {
+    accountKey,
+    generation,
+    baseProgress: cached?.progress ?? fallbackBaseProgress,
+    events: [...pending.values()],
+  });
+  if (recovery.persisted) {
+    for (const event of durableEvents) {
+      storageRemove(storage, accountEventKey(accountKey, generation, event.id));
     }
-  } catch {
-    return progress;
   }
-  for (const event of pending) {
-    storageRemove(storage, accountEventKey(accountKey, generation, event.id));
-  }
-  storageRemove(storage, accountBaseKey(accountKey, generation));
-  return progress;
+  return recovery;
 }
 
 function downloadProgress(progress: LearnerProgress) {
@@ -352,6 +371,7 @@ export function useSyncedProgress() {
   const syncIdlePromiseRef = useRef<Promise<void> | null>(null);
   const resolveSyncIdleRef = useRef<(() => void) | null>(null);
   const bootstrapInFlightRef = useRef(false);
+  const bootstrapAgainRef = useRef(false);
   const mountedRef = useRef(true);
   const syncAgainRef = useRef(false);
   const syncNowRef = useRef<() => Promise<void>>(async () => undefined);
@@ -360,6 +380,7 @@ export function useSyncedProgress() {
   const pageDeviceIdRef = useRef('');
   const pageSequenceRef = useRef(0);
   const volatileOutboxRef = useRef(new Map<string, VolatileProgressEvent>());
+  const legacyConflictRef = useRef<LegacyConflict | null>(null);
 
   const pendingEventsFor = useCallback(
     (storage: Storage | null, accountKey: string, generation: number) => {
@@ -377,11 +398,7 @@ export function useSyncedProgress() {
           events.set(queued.event.id, queued.event);
         }
       }
-      return [...events.values()].sort(
-        (a, b) =>
-          a.clientSequence - b.clientSequence ||
-          a.occurredAt.localeCompare(b.occurredAt),
-      );
+      return [...events.values()].sort(compareProgressEvents);
     },
     [],
   );
@@ -391,6 +408,11 @@ export function useSyncedProgress() {
     if (mountedRef.current) setProgressState(next);
   }, []);
 
+  const commitLegacyConflict = useCallback((next: LegacyConflict | null) => {
+    legacyConflictRef.current = next;
+    if (mountedRef.current) setLegacyConflict(next);
+  }, []);
+
   const acceptBootstrap = useCallback(
     (
       bootstrap: ProgressBootstrap,
@@ -398,6 +420,9 @@ export function useSyncedProgress() {
       acknowledgedGeneration = bootstrap.generation,
     ) => {
       const storage = safeLocalStorage();
+      let generationRecovery: ReturnType<
+        typeof persistProgressRecovery
+      > | null = null;
       for (const eventId of acknowledged) {
         storageRemove(
           storage,
@@ -415,45 +440,33 @@ export function useSyncedProgress() {
           volatileOutboxRef.current.delete(eventId);
         }
       }
-      const prior = accountRef.current ?? readLastAccount(storage);
+      const inMemoryPrior = accountRef.current;
+      const prior = inMemoryPrior ?? readLastAccount(storage);
       if (
         prior?.accountKey === bootstrap.accountKey &&
         prior.generation !== bootstrap.generation
       ) {
-        const cached = readCachedBase(
-          storage,
-          bootstrap.accountKey,
-          prior.generation,
-        );
-        let recovery = quarantinePendingGeneration(
-          storage,
-          bootstrap.accountKey,
-          prior.generation,
-        );
         const volatile = [...volatileOutboxRef.current.values()].filter(
           (queued) =>
             queued.accountKey === bootstrap.accountKey &&
             queued.generation === prior.generation,
         );
-        if (volatile.length) {
-          recovery = applyEvents(
-            recovery ?? cached?.progress ?? createInitialProgress(),
-            volatile.map((queued) => queued.event),
-          );
-        }
-        if (recovery && !isProgressEmpty(recovery)) {
-          setLegacyConflict({
-            progress: recovery,
-            belongsToAnotherAccount: false,
-          });
-          if (
-            !storageSet(storage, LEGACY_BACKUP_KEY, JSON.stringify(recovery))
-          ) {
-            setStorageIssue(true);
+        generationRecovery = quarantinePendingGeneration(
+          storage,
+          bootstrap.accountKey,
+          prior.generation,
+          volatile.map((queued) => queued.event),
+          inMemoryPrior?.accountKey === bootstrap.accountKey &&
+            inMemoryPrior.generation === prior.generation
+            ? canonicalRef.current
+            : undefined,
+        );
+        if (generationRecovery?.persisted) {
+          for (const queued of volatile) {
+            volatileOutboxRef.current.delete(queued.event.id);
           }
-        }
-        for (const queued of volatile) {
-          volatileOutboxRef.current.delete(queued.event.id);
+        } else if (generationRecovery) {
+          setStorageIssue(true);
         }
       }
       const nextAccount: AccountState = {
@@ -493,6 +506,7 @@ export function useSyncedProgress() {
         bootstrap.generation,
       );
       commitProgress(applyEvents(bootstrap.progress, pending));
+      return generationRecovery;
     },
     [commitProgress, pendingEventsFor],
   );
@@ -621,16 +635,24 @@ export function useSyncedProgress() {
 
   const importProgress = useCallback(
     async (
-      imported: LearnerProgress,
+      importedInput: LearnerProgress | (() => LearnerProgress),
       mode: 'empty-only' | 'merge' | 'replace',
+      preserveLegacyStorage = false,
+      isStillCurrent?: () => boolean,
     ) => {
       let currentAccount = accountRef.current;
       if (!currentAccount) return false;
+      if (isStillCurrent && !isStillCurrent()) {
+        setStatus('attention');
+        queueMicrotask(() => void bootstrapNowRef.current());
+        return false;
+      }
       if (mode !== 'empty-only') {
         await syncNowRef.current();
         currentAccount = accountRef.current;
         if (
           !currentAccount ||
+          (isStillCurrent && !isStillCurrent()) ||
           pendingEventsFor(
             safeLocalStorage(),
             currentAccount.accountKey,
@@ -641,8 +663,24 @@ export function useSyncedProgress() {
           return false;
         }
       }
-      setStatus('saving');
+      const imported =
+        typeof importedInput === 'function' ? importedInput() : importedInput;
       try {
+        const importId = await deterministicOperationId(
+          'import',
+          JSON.stringify({
+            accountKey: currentAccount.accountKey,
+            generation: currentAccount.generation,
+            mode,
+            progress: imported,
+          }),
+        );
+        if (isStillCurrent && !isStillCurrent()) {
+          setStatus('attention');
+          queueMicrotask(() => void bootstrapNowRef.current());
+          return false;
+        }
+        setStatus('saving');
         const response = await fetch('/api/progress/import', {
           method: 'POST',
           headers: {
@@ -654,15 +692,7 @@ export function useSyncedProgress() {
             expectedAccountKey: currentAccount.accountKey,
             expectedGeneration: currentAccount.generation,
             expectedRevision: currentAccount.revision,
-            importId: await deterministicOperationId(
-              'import',
-              JSON.stringify({
-                accountKey: currentAccount.accountKey,
-                generation: currentAccount.generation,
-                mode,
-                progress: imported,
-              }),
-            ),
+            importId,
             mode,
             progress: imported,
           }),
@@ -680,23 +710,31 @@ export function useSyncedProgress() {
           return false;
         }
         const storage = safeLocalStorage();
-        storageSet(storage, LEGACY_OWNER_KEY, body.accountKey);
-        storageSet(storage, LEGACY_BACKUP_KEY, JSON.stringify(imported));
-        storageRemove(storage, STORAGE_KEY);
-        acceptBootstrap(body);
-        setLegacyConflict(null);
+        if (!preserveLegacyStorage) {
+          storageSet(storage, LEGACY_OWNER_KEY, body.accountKey);
+          storageSet(storage, LEGACY_BACKUP_KEY, JSON.stringify(imported));
+          storageRemove(storage, STORAGE_KEY);
+        }
+        const generationRecovery = acceptBootstrap(body);
+        commitLegacyConflict(null);
         setStatus('saved');
+        if (generationRecovery) {
+          queueMicrotask(() => void bootstrapNowRef.current());
+        }
         return true;
       } catch {
         setStatus('offline');
         return false;
       }
     },
-    [acceptBootstrap, detachAccount, pendingEventsFor],
+    [acceptBootstrap, commitLegacyConflict, detachAccount, pendingEventsFor],
   );
 
   const bootstrapNow = useCallback(async () => {
-    if (bootstrapInFlightRef.current) return;
+    if (bootstrapInFlightRef.current) {
+      bootstrapAgainRef.current = true;
+      return;
+    }
     bootstrapInFlightRef.current = true;
     const storage = safeLocalStorage();
     if (!storage) setStorageIssue(true);
@@ -736,25 +774,122 @@ export function useSyncedProgress() {
         setStatus('offline');
         return;
       }
-      acceptBootstrap(body);
+      const priorAccount = accountRef.current;
+      const priorCanonical = canonicalRef.current;
+      const immediateRecovery = acceptBootstrap(body);
+      const inMemoryRecoveries: ProgressRecovery[] = [];
+      if (immediateRecovery && !immediateRecovery.persisted) {
+        inMemoryRecoveries.push(immediateRecovery);
+      }
+      const alreadyQuarantined = new Set(
+        immediateRecovery?.eventRefs.map((event) => event.generation) ?? [],
+      );
+      const staleGenerations = new Set(
+        olderPendingGenerations(storage, body.accountKey, body.generation),
+      );
+      for (const queued of volatileOutboxRef.current.values()) {
+        if (
+          queued.accountKey === body.accountKey &&
+          queued.generation < body.generation
+        ) {
+          staleGenerations.add(queued.generation);
+        }
+      }
+      for (const generation of [...staleGenerations].sort((a, b) => a - b)) {
+        if (alreadyQuarantined.has(generation)) continue;
+        const volatile = [...volatileOutboxRef.current.values()].filter(
+          (queued) =>
+            queued.accountKey === body.accountKey &&
+            queued.generation === generation,
+        );
+        const recovery = quarantinePendingGeneration(
+          storage,
+          body.accountKey,
+          generation,
+          volatile.map((queued) => queued.event),
+          priorAccount?.accountKey === body.accountKey &&
+            priorAccount.generation === generation
+            ? priorCanonical
+            : undefined,
+        );
+        if (!recovery) continue;
+        if (recovery.persisted) {
+          for (const queued of volatile) {
+            volatileOutboxRef.current.delete(queued.event.id);
+          }
+        } else {
+          inMemoryRecoveries.push(recovery);
+          setStorageIssue(true);
+        }
+      }
+      const storedRecoveries = readPendingProgressRecoveries(
+        storage,
+        body.accountKey,
+        body.generation,
+      );
+      const recoveries = new Map<string, ProgressRecovery>();
+      for (const recovery of [...storedRecoveries, ...inMemoryRecoveries]) {
+        recoveries.set(recovery.storageKey, recovery);
+      }
+      const combinedRecovery = combineProgressRecoveries([
+        ...recoveries.values(),
+      ]);
+      const storedRecoveryKeys = new Set(
+        storedRecoveries.map((recovery) => recovery.storageKey),
+      );
+      const recoveryConflict =
+        combinedRecovery && !isProgressEmpty(combinedRecovery.progress)
+          ? ({
+              progress: combinedRecovery.progress,
+              belongsToAnotherAccount: false,
+              source: 'stale-generation',
+              recoveryKeys: combinedRecovery.recoveryKeys.filter((key) =>
+                storedRecoveryKeys.has(key),
+              ),
+              recoveryGenerations: combinedRecovery.recoveryGenerations,
+              recoveryEvents: combinedRecovery.recoveryEvents,
+            } satisfies LegacyConflict)
+          : null;
+      if (combinedRecovery && isProgressEmpty(combinedRecovery.progress)) {
+        removeProgressRecoveries(storage, combinedRecovery.recoveryKeys);
+      }
       const legacyOwner = storageGet(storage, LEGACY_OWNER_KEY);
       const hasLegacy = !isProgressEmpty(legacy);
-      if (hasLegacy && !body.hasCloudData && legacyOwner === body.accountKey) {
+      if (recoveryConflict) {
+        commitLegacyConflict(recoveryConflict);
+        setStatus('attention');
+      } else if (
+        hasLegacy &&
+        !body.hasCloudData &&
+        legacyOwner === body.accountKey
+      ) {
         const imported = await importProgress(legacy, 'empty-only');
         if (!imported) {
-          setLegacyConflict({
+          commitLegacyConflict({
             progress: legacy,
             belongsToAnotherAccount: false,
+            source: 'legacy',
+            recoveryKeys: [],
+            recoveryGenerations: [],
+            recoveryEvents: [],
           });
+          setStatus('attention');
         }
       } else if (hasLegacy) {
-        setLegacyConflict({
+        commitLegacyConflict({
           progress: legacy,
           belongsToAnotherAccount:
             legacyOwner !== null && legacyOwner !== body.accountKey,
+          source: 'legacy',
+          recoveryKeys: [],
+          recoveryGenerations: [],
+          recoveryEvents: [],
         });
+        setStatus('attention');
+      } else {
+        commitLegacyConflict(null);
+        setStatus('saved');
       }
-      setStatus('saved');
       void syncNowRef.current();
     } catch {
       if (!accountRef.current) {
@@ -768,8 +903,18 @@ export function useSyncedProgress() {
       window.clearTimeout(timeout);
       bootstrapInFlightRef.current = false;
       if (mountedRef.current) setHydrated(true);
+      if (bootstrapAgainRef.current) {
+        bootstrapAgainRef.current = false;
+        queueMicrotask(() => void bootstrapNowRef.current());
+      }
     }
-  }, [acceptBootstrap, commitProgress, detachAccount, importProgress]);
+  }, [
+    acceptBootstrap,
+    commitLegacyConflict,
+    commitProgress,
+    detachAccount,
+    importProgress,
+  ]);
 
   useEffect(() => {
     bootstrapNowRef.current = bootstrapNow;
@@ -787,19 +932,33 @@ export function useSyncedProgress() {
   useEffect(() => {
     const resume = () => {
       if (document.visibilityState !== 'visible') return;
-      if (accountRef.current) void syncNowRef.current();
-      else void bootstrapNowRef.current();
+      void bootstrapNowRef.current();
     };
     const online = () => {
-      if (accountRef.current) void syncNowRef.current();
-      else void bootstrapNowRef.current();
+      void bootstrapNowRef.current();
+    };
+    const storageChanged = (event: StorageEvent) => {
+      const currentAccount = accountRef.current;
+      if (!currentAccount || !event.key) return;
+      const recoveryPrefix = `${RECOVERY_PREFIX}${currentAccount.accountKey}:`;
+      const accountPrefix = `${ACCOUNT_PREFIX}${currentAccount.accountKey}:`;
+      if (
+        event.key.startsWith(recoveryPrefix) ||
+        (event.key.startsWith(accountPrefix) &&
+          event.key.includes(':event:')) ||
+        event.key === STORAGE_KEY
+      ) {
+        void bootstrapNowRef.current();
+      }
     };
     window.addEventListener('online', online);
     window.addEventListener('focus', online);
+    window.addEventListener('storage', storageChanged);
     document.addEventListener('visibilitychange', resume);
     return () => {
       window.removeEventListener('online', online);
       window.removeEventListener('focus', online);
+      window.removeEventListener('storage', storageChanged);
       document.removeEventListener('visibilitychange', resume);
     };
   }, []);
@@ -913,6 +1072,10 @@ export function useSyncedProgress() {
     async (input: unknown, mode: 'merge' | 'replace') => {
       const parsed = parseStrictProgress(input);
       if (!parsed) return { ok: false, reason: 'invalid' as const };
+      if (legacyConflictRef.current) {
+        setStatus('attention');
+        return { ok: false, reason: 'unavailable' as const };
+      }
       if (!accountRef.current || deviceOnlyRef.current) {
         canonicalRef.current = parsed;
         commitProgress(parsed);
@@ -932,34 +1095,148 @@ export function useSyncedProgress() {
 
   const resolveLegacyConflict = useCallback(
     async (choice: 'keep-cloud' | 'merge' | 'replace') => {
-      if (!legacyConflict || !accountRef.current) return false;
-      if (choice === 'keep-cloud') {
-        const storage = safeLocalStorage();
-        storageSet(
-          storage,
-          LEGACY_BACKUP_KEY,
-          JSON.stringify(legacyConflict.progress),
+      const currentAccount = accountRef.current;
+      const conflict = legacyConflict;
+      if (!conflict || !currentAccount) return false;
+      const storage = safeLocalStorage();
+      const conflictStillCurrent = () => {
+        const latestAccount = accountRef.current;
+        if (
+          legacyConflictRef.current !== conflict ||
+          latestAccount?.accountKey !== currentAccount.accountKey ||
+          latestAccount.generation !== currentAccount.generation
+        ) {
+          return false;
+        }
+        if (conflict.source === 'stale-generation') {
+          if (!conflict.recoveryKeys.length) return true;
+          const currentKeys = new Set(
+            readPendingProgressRecoveries(
+              storage,
+              currentAccount.accountKey,
+              currentAccount.generation,
+            ).map((recovery) => recovery.storageKey),
+          );
+          return conflict.recoveryKeys.every((key) => currentKeys.has(key));
+        }
+        const currentLegacy = normalizeCourseFrontier(
+          parseProgress(storageGet(storage, STORAGE_KEY)),
         );
-        storageSet(storage, LEGACY_OWNER_KEY, accountRef.current.accountKey);
-        storageRemove(storage, STORAGE_KEY);
-        setLegacyConflict(null);
+        return (
+          !isProgressEmpty(currentLegacy) &&
+          JSON.stringify(currentLegacy) === JSON.stringify(conflict.progress)
+        );
+      };
+      const invalidateConflict = () => {
+        commitLegacyConflict(null);
+        setStatus('attention');
+        queueMicrotask(() => void bootstrapNowRef.current());
+      };
+      const removeResolvedRecovery = () => {
+        removeProgressRecoveries(storage, conflict.recoveryKeys);
+        for (const event of conflict.recoveryEvents) {
+          storageRemove(
+            storage,
+            accountEventKey(
+              currentAccount.accountKey,
+              event.generation,
+              event.eventId,
+            ),
+          );
+        }
+        for (const [eventId, queued] of volatileOutboxRef.current) {
+          if (
+            queued.accountKey === currentAccount.accountKey &&
+            conflict.recoveryEvents.some(
+              (event) =>
+                event.generation === queued.generation &&
+                event.eventId === eventId,
+            )
+          ) {
+            volatileOutboxRef.current.delete(eventId);
+          }
+        }
+      };
+      if (!conflictStillCurrent()) {
+        invalidateConflict();
+        return false;
+      }
+      if (choice === 'keep-cloud') {
+        const backupStored =
+          conflict.source === 'stale-generation'
+            ? true
+            : storageSet(
+                storage,
+                LEGACY_BACKUP_KEY,
+                JSON.stringify(conflict.progress),
+              );
+        if (!backupStored) {
+          setStorageIssue(true);
+          return false;
+        }
+        // A no-op replace makes "keep" a server-CAS decision, so a second tab
+        // cannot subsequently overwrite the choice with a stale conflict.
+        const confirmed = await importProgress(
+          () => canonicalRef.current,
+          'replace',
+          true,
+          conflictStillCurrent,
+        );
+        if (!confirmed) return false;
+        removeResolvedRecovery();
+        if (conflict.source === 'legacy') {
+          storageRemove(storage, STORAGE_KEY);
+          storageRemove(storage, LEGACY_OWNER_KEY);
+        }
+        commitLegacyConflict(null);
+        queueMicrotask(() => void bootstrapNowRef.current());
         return true;
       }
-      return importProgress(legacyConflict.progress, choice);
+      const imported = await importProgress(
+        conflict.progress,
+        choice,
+        conflict.source === 'stale-generation',
+        conflictStillCurrent,
+      );
+      if (!imported) return false;
+      removeResolvedRecovery();
+      queueMicrotask(() => void bootstrapNowRef.current());
+      return true;
     },
-    [importProgress, legacyConflict],
+    [commitLegacyConflict, importProgress, legacyConflict],
   );
 
   const clearThisDevice = useCallback(async () => {
+    if (legacyConflictRef.current) {
+      setStatus('attention');
+      return false;
+    }
     const storage = safeLocalStorage();
     if (accountRef.current) {
       const expectedAccount = accountRef.current;
       await syncNowRef.current();
       const currentAccount = accountRef.current;
+      const hasStaleVolatile = [...volatileOutboxRef.current.values()].some(
+        (queued) =>
+          queued.accountKey === currentAccount?.accountKey &&
+          queued.generation !== currentAccount.generation,
+      );
       if (
         !currentAccount ||
+        Boolean(legacyConflictRef.current) ||
         currentAccount.accountKey !== expectedAccount.accountKey ||
         currentAccount.generation !== expectedAccount.generation ||
+        readPendingProgressRecoveries(
+          storage,
+          currentAccount.accountKey,
+          currentAccount.generation,
+        ).length > 0 ||
+        olderPendingGenerations(
+          storage,
+          currentAccount.accountKey,
+          currentAccount.generation,
+        ).length > 0 ||
+        hasStaleVolatile ||
         pendingEventsFor(
           storage,
           currentAccount.accountKey,
@@ -967,14 +1244,19 @@ export function useSyncedProgress() {
         ).length > 0
       ) {
         setStatus('attention');
+        queueMicrotask(() => void bootstrapNowRef.current());
         return false;
       }
       storageRemove(storage, STORAGE_KEY);
-      const prefix = `${ACCOUNT_PREFIX}${currentAccount.accountKey}:`;
-      for (const key of storageKeysStartingWith(storage, prefix)) {
-        storageRemove(storage, key);
-      }
+      // Delete only the cache entry observed above. A broad prefix deletion can
+      // erase an event another tab writes immediately after the final scan.
+      storageRemove(
+        storage,
+        accountBaseKey(currentAccount.accountKey, currentAccount.generation),
+      );
       storageRemove(storage, LAST_ACCOUNT_KEY);
+      storageRemove(storage, LEGACY_OWNER_KEY);
+      storageRemove(storage, LEGACY_BACKUP_KEY);
       for (const [eventId, queued] of volatileOutboxRef.current) {
         if (queued.accountKey === currentAccount.accountKey) {
           volatileOutboxRef.current.delete(eventId);
@@ -988,7 +1270,8 @@ export function useSyncedProgress() {
         const body = (await response.json().catch(() => null)) as unknown;
         if (response.ok && responseIsBootstrap(body)) {
           acceptBootstrap(body);
-          setStatus('saved');
+          setStatus('saving');
+          queueMicrotask(() => void syncNowRef.current());
           return true;
         }
         if (response.status === 401) {
@@ -1053,7 +1336,11 @@ export function useSyncedProgress() {
           volatileOutboxRef.current.delete(eventId);
         }
       }
+      removeAllProgressRecoveriesForAccount(storage, currentAccount.accountKey);
       storageRemove(storage, STORAGE_KEY);
+      storageRemove(storage, LEGACY_OWNER_KEY);
+      storageRemove(storage, LEGACY_BACKUP_KEY);
+      commitLegacyConflict(null);
       acceptBootstrap(body);
       setStatus('saved');
       return true;
@@ -1061,7 +1348,7 @@ export function useSyncedProgress() {
       setStatus('offline');
       return false;
     }
-  }, [acceptBootstrap, detachAccount]);
+  }, [acceptBootstrap, commitLegacyConflict, detachAccount]);
 
   return {
     progress,

@@ -9,7 +9,7 @@ The hosted Salita site uses ChatGPT sign-in. Select **Continue with ChatGPT** if
 - Salita does not create a separate password.
 - Hosted progress is keyed to the authenticated account, not to the email text shown in the interface.
 - The app saves checked answers locally first, then synchronizes them. A brief connection loss does not discard an open lesson.
-- Local development at `localhost` uses device-only storage because it does not receive the hosted identity headers.
+- An ordinary `localhost` session uses device-only storage. Developers can deliberately enter the Sites local sign-in simulation, but only the authenticated published Site validates real account sync.
 - If a browser already contains older device-only progress, Salita imports it automatically only when the signed-in cloud record is empty. If two nonempty histories could conflict, it asks you to **Keep account copy**, **Merge both**, or **Use device copy** and keeps a local backup first.
 
 If another account says it has no access, the Site owner must include that account in the Site's access policy. Account sync cannot bypass the host's sign-in gate.
@@ -17,13 +17,15 @@ If another account says it has no access, the Site owner must include that accou
 ## Install Salita on iPhone
 
 1. Open the published Salita link in **Safari** and sign in.
-2. Tap Safari's **Share** button.
+2. Tap Safari's **Share** button. With the Compact tab layout, tap **More (…)** and then **Share**.
 3. Choose **Add to Home Screen**. If it is not visible, scroll the action list or choose **Edit Actions**.
-4. Keep the name **Salita**, then tap **Add**.
+4. Keep the name **Salita**, turn on **Open as Web App**, then tap **Add**.
 5. Launch Salita from its Home Screen icon. It opens in a standalone app window.
 6. When a speaking exercise first asks, allow microphone access.
 
-Use the same signed-in account on desktop and iPhone. Completed answers, lessons, XP, review schedules, mistakes, streak days, and minutes synchronize in both directions. Keep the app open until the Progress screen says **saved** when you are about to switch devices.
+These steps follow Apple's current [Add a website icon to your iPhone Home Screen](https://support.apple.com/en-nz/guide/iphone/iphea86e5236/ios) guide.
+
+Use the same signed-in account on desktop and iPhone. Completed answers, lessons, XP, review schedules, mistakes, streak days, and minutes synchronize in both directions. Keep the first device open until the Progress screen says **saved**, then bring Salita to the foreground on the other device (or reload it) to fetch the latest account copy.
 
 On Android or desktop Chrome/Edge, use the browser's **Install app** or **Add to Home screen** command. Salita also includes install icons, safe-area spacing, and an offline fallback page.
 
@@ -162,6 +164,8 @@ Open **Progress** > **Your data**.
 - **Clear this device** removes local cached/outbox data but leaves the signed-in cloud copy intact; Salita reloads that canonical copy when reachable.
 - **Delete everywhere** appears only while signed in, requires two confirmations, and advances a server-side reset generation. It deletes synced learning history from prior generations across devices while retaining the minimal reset marker needed to reject stale offline writes.
 
+If another device still has unsynced work from before a reset or replacement, Salita keeps that work in an account-scoped local recovery record and asks whether to keep the account copy, merge both, or use the device copy. The choice survives a reload; Salita never restores stale work automatically over an intentional reset.
+
 Never share a progress export casually; it contains learning history and review performance even though it contains no sign-in identifier.
 
 The sync indicator can report:
@@ -170,7 +174,7 @@ The sync indicator can report:
 - **saving** — events are being uploaded.
 - **offline** — events remain queued on this device.
 - **attention** — another device reset or replaced the account generation; reload before adding more changes.
-- **device-only** — hosted identity/database is not available, as expected in ordinary localhost development.
+- **device-only** — hosted identity/database is not available, as expected in an ordinary localhost session outside the optional development sign-in simulation.
 
 ## Privacy and cost boundaries
 
@@ -196,7 +200,7 @@ Move closer, reduce background sound, wait for **Listening…**, and say one com
 
 ### Progress seems missing
 
-Confirm that the same ChatGPT account is signed in and that you are on the same published Salita hostname. Check for a yellow conflict card, then choose the correct copy. On localhost, progress is intentionally device-only. Use Export before clearing browser data.
+Confirm that the same ChatGPT account is signed in and that you are on the same published Salita hostname. After one device says **saved**, foreground or reload Salita on the other device. Check for a yellow conflict card, then choose the correct copy. Ordinary localhost sessions are intentionally device-only unless a developer entered the local sign-in simulation. Use Export before clearing browser data.
 
 ### The app is offline
 
