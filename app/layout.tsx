@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL(
-    'https://salita-daily-tagalog.hello925837.chatgpt.site',
+    process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000',
   ),
   title: 'Salita — Learn Tagalog every day',
   description:

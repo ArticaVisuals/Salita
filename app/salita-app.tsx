@@ -536,11 +536,16 @@ function findReviewTarget(
   return { fil: unit.dialogue.line, en: unit.dialogue.situation, unit };
 }
 
-export default function SalitaApp() {
+export default function SalitaApp({
+  initialTodayKey,
+}: {
+  initialTodayKey: string;
+}) {
   const [view, setView] = useState<View>('today');
   const [progress, setProgress] = useState<LearnerProgress>(
     createInitialProgress,
   );
+  const [todayKey, setTodayKey] = useState(initialTodayKey);
   const [hydrated, setHydrated] = useState(false);
   const [storageIssue, setStorageIssue] = useState(false);
   const [lessonSession, setLessonSession] = useState<{
@@ -558,6 +563,13 @@ export default function SalitaApp() {
       setHydrated(true);
     });
     return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const refreshToday = () => setTodayKey(localDateKey());
+    refreshToday();
+    const interval = window.setInterval(refreshToday, 60_000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -761,7 +773,12 @@ export default function SalitaApp() {
 
   return (
     <main className="min-h-dvh bg-background text-foreground">
-      <AppHeader view={view} onNavigate={setView} progress={progress} />
+      <AppHeader
+        view={view}
+        onNavigate={setView}
+        progress={progress}
+        todayKey={todayKey}
+      />
       <div className="mx-auto max-w-6xl px-5 pb-28 pt-8 lg:px-8 lg:pb-12 lg:pt-10">
         {storageIssue && (
           <output className="mb-5 flex items-start gap-3 rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-sm text-[#5c4a00]">
@@ -773,6 +790,7 @@ export default function SalitaApp() {
         {view === 'today' && (
           <TodayView
             progress={progress}
+            todayKey={todayKey}
             onStart={startLesson}
             onNavigate={setView}
           />
@@ -783,6 +801,7 @@ export default function SalitaApp() {
         {view === 'review' && (
           <ReviewView
             progress={progress}
+            todayKey={todayKey}
             onStartLesson={startLesson}
             onStartReview={startReview}
           />
@@ -790,6 +809,7 @@ export default function SalitaApp() {
         {view === 'progress' && (
           <ProgressView
             progress={progress}
+            todayKey={todayKey}
             onExport={exportProgress}
             onReset={resetProgress}
           />
@@ -804,12 +824,14 @@ function AppHeader({
   view,
   onNavigate,
   progress,
+  todayKey,
 }: {
   view: View;
   onNavigate: (view: View) => void;
   progress: LearnerProgress;
+  todayKey: string;
 }) {
-  const { current } = deriveStreaks(progress.completedDays, localDateKey());
+  const { current } = deriveStreaks(progress.completedDays, todayKey);
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
@@ -905,21 +927,22 @@ function MobileNav({
 
 function TodayView({
   progress,
+  todayKey,
   onStart,
   onNavigate,
 }: {
   progress: LearnerProgress;
+  todayKey: string;
   onStart: (unitId: string) => void;
   onNavigate: (view: View) => void;
 }) {
   const unit = getUnit(progress.activeUnitId);
-  const today = localDateKey();
-  const minutes = progress.dailyMinutes[today] ?? 0;
+  const minutes = progress.dailyMinutes[todayKey] ?? 0;
   const goalPercent = Math.min(100, (minutes / 10) * 100);
-  const { current } = deriveStreaks(progress.completedDays, today);
+  const { current } = deriveStreaks(progress.completedDays, todayKey);
   const calculatedDay =
     progress.completedDays.length +
-    (progress.completedDays.includes(today) ? 0 : 1);
+    (progress.completedDays.includes(todayKey) ? 0 : 1);
   const journeyDay = calculatedDay < 1 ? 1 : calculatedDay;
 
   return (
@@ -1065,7 +1088,7 @@ function TodayView({
       </section>
 
       <aside className="space-y-4">
-        <StreakCard progress={progress} />
+        <StreakCard progress={progress} todayKey={todayKey} />
         <section className="rounded-[16px] border border-border bg-card p-5">
           <div className="mb-3 flex items-center justify-between">
             <div>
@@ -1177,12 +1200,17 @@ function VoiceConnectionCard() {
   );
 }
 
-function StreakCard({ progress }: { progress: LearnerProgress }) {
-  const today = localDateKey();
-  const { current } = deriveStreaks(progress.completedDays, today);
+function StreakCard({
+  progress,
+  todayKey,
+}: {
+  progress: LearnerProgress;
+  todayKey: string;
+}) {
+  const { current } = deriveStreaks(progress.completedDays, todayKey);
   const completed = new Set(progress.completedDays);
   const days = Array.from({ length: 7 }, (_, index) =>
-    addCalendarDays(today, index - 6),
+    addCalendarDays(todayKey, index - 6),
   );
 
   return (
@@ -1205,7 +1233,7 @@ function StreakCard({ progress }: { progress: LearnerProgress }) {
             weekday: 'narrow',
           });
           const isDone = completed.has(day);
-          const isToday = day === today;
+          const isToday = day === todayKey;
           return (
             <div key={day} className="text-center">
               <time
@@ -1475,21 +1503,22 @@ function LearnView({
 
 function ReviewView({
   progress,
+  todayKey,
   onStartLesson,
   onStartReview,
 }: {
   progress: LearnerProgress;
+  todayKey: string;
   onStartLesson: (unitId: string) => void;
   onStartReview: (unitId: string) => void;
 }) {
-  const today = localDateKey();
   const reviewItems = Object.entries(progress.reviews)
     .map(([key, record]) => ({
       key,
       record,
       found: findReviewTarget(key.slice(0, key.lastIndexOf(':'))),
     }))
-    .filter((item) => item.found && item.record.dueDate <= today)
+    .filter((item) => item.found && item.record.dueDate <= todayKey)
     .sort(
       (a, b) =>
         a.record.dueDate.localeCompare(b.record.dueDate) ||
@@ -1599,17 +1628,18 @@ function ReviewView({
 
 function ProgressView({
   progress,
+  todayKey,
   onExport,
   onReset,
 }: {
   progress: LearnerProgress;
+  todayKey: string;
   onExport: () => void;
   onReset: () => void;
 }) {
-  const today = localDateKey();
-  const { current, best } = deriveStreaks(progress.completedDays, today);
+  const { current, best } = deriveStreaks(progress.completedDays, todayKey);
   const calendarDays = Array.from({ length: 35 }, (_, index) =>
-    addCalendarDays(today, index - 34),
+    addCalendarDays(todayKey, index - 34),
   );
   const completed = new Set(progress.completedDays);
   const strong = Object.values(progress.reviews).filter(
@@ -1711,7 +1741,7 @@ function ProgressView({
                   className={`aspect-square rounded-[5px] border ${
                     done
                       ? 'border-[var(--f-success-strong)] bg-[var(--f-success-strong)]'
-                      : day === today
+                      : day === todayKey
                         ? 'border-primary bg-[var(--f-pink-3)]'
                         : 'border-border bg-muted'
                   }`}
@@ -2760,20 +2790,22 @@ function SpeechAssessmentPanel({ state }: { state: SpeechSessionState }) {
       )}
       {result.level !== 'unscored' && result.lowAccuracyWords.length > 0 && (
         <div className="mt-3">
-          <p className="text-xs font-black">Listen and retry these words:</p>
-          <div className="mt-2 flex flex-wrap gap-2">
+          <p className="text-xs font-black">
+            Word to focus on for your next try:
+          </p>
+          <ul className="mt-2 flex flex-wrap gap-2">
             {result.lowAccuracyWords.slice(0, 1).map((word) => (
-              <span
+              <li
                 key={`${word.word}-${word.accuracy ?? 'unknown'}`}
                 className="rounded-full bg-white/60 px-3 py-1 text-xs font-black"
               >
                 {word.word}
                 {word.accuracy === null
                   ? ''
-                  : ` · ${Math.round(word.accuracy)}`}
-              </span>
+                  : ` · accuracy ${Math.round(word.accuracy)}/100`}
+              </li>
             ))}
-          </div>
+          </ul>
         </div>
       )}
       {result.level === 'retry' && result.missingWords.length > 0 && (

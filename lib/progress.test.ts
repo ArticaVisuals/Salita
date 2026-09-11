@@ -5,10 +5,17 @@ import {
   addCalendarDays,
   deriveStreaks,
   isReviewDue,
+  localDateKey,
   parseProgress,
   scoreAttempt,
   updateReview,
 } from './progress.ts';
+
+void test('local date keys respect the requested time zone at a date boundary', () => {
+  const instant = new Date('2026-09-10T00:30:00.000Z');
+  assert.equal(localDateKey(instant, 'UTC'), '2026-09-10');
+  assert.equal(localDateKey(instant, 'America/Los_Angeles'), '2026-09-09');
+});
 
 void test('calendar arithmetic stays sequential across DST dates', () => {
   assert.equal(addCalendarDays('2026-03-08', 1), '2026-03-09');

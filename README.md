@@ -1,36 +1,78 @@
 # Salita
 
-Salita is a daily Tagalog (Filipino) learning app built with the Flamingo design language. Its foundation lessons combine pronunciation, explicit grammar, controlled sentence transformations, graded readings, listening, and speaking practice. Progress, streaks, and spaced reviews are stored in the learner's browser.
+![Salita — Tagalog, one real conversation at a time](public/og.png)
 
-## Local development
+Salita is a daily, mixed-method Tagalog (Filipino) learning web app for English-speaking beginners. It combines practical conversation, explicit grammar, pronunciation foundations, listening, reading, speaking, streaks, and spaced review in short daily sessions.
+
+The interface stays in English so a new learner can navigate confidently, while lessons steadily increase the amount of Filipino they ask the learner to understand and produce.
+
+## What is included
+
+- Eight progressive foundation units covering greetings, introductions, needs, food, directions, routines, plans, and getting help.
+- High-frequency phrases presented with register, grammar, and usage notes—not as isolated translations.
+- A daily path with XP, streaks, skill strength, review scheduling, and session history.
+- Filipino neural text to speech for full models and tap-to-hear words.
+- Guided pronunciation work on vowels, stress, `ng`, vowel boundaries and glottal stops, the tapped `r`, linkers, and repeated syllables.
+- Filipino speech recognition with transcript-aware coaching, plus Azure word-level pronunciation assessment for the English side of bilingual speaking prompts.
+- Controlled transformations, dialogues, listening checks, readings, and recall practice.
+- Responsive, accessible interaction patterns inspired by Heetch's [Flamingo design system](https://github.com/heetch/flamingo).
+
+Salita stores learning progress in the browser under `salita-progress-v1`. It does not create a cloud learner account or upload progress to a database. Clearing site data, using a different browser profile, or switching devices starts a separate local record.
+
+## Start here
+
+- Learner: read the [User Guide](docs/USER_GUIDE.md).
+- Developer or self-hoster: follow [Setup and Deployment](docs/SETUP_AND_DEPLOYMENT.md).
+- Contributor: read [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md).
+
+## Quick start
+
+Requirements: Node.js 22.13 or newer and npm.
 
 ```bash
-npm install
+git clone https://github.com/ArticaVisuals/Salita.git
+cd Salita
+npm ci
+cp .env.example .env.local
 npm run dev
 ```
 
-Use `npm test`, `npm run lint`, `npm run typecheck`, and `npm run build` before publishing.
+Open the local URL printed by the development server. The learning flow works without Azure credentials; cloud voices and microphone coaching require an Azure AI Speech resource configured in `.env.local`.
 
-## Azure speech
+Run the release checks with:
 
-Copy `.env.example` to `.env.local` for local development and set:
+```bash
+npm test
+npm run typecheck
+npm run lint
+npm run build
+npm audit --audit-level=high
+```
 
-- `AZURE_SPEECH_KEY`: an Azure AI Speech resource key. Keep it server-only.
-- `AZURE_SPEECH_REGION`: the region of that same Speech resource, such as `westus2`.
-- `AZURE_SPEECH_VOICE`: optional; `fil-PH-BlessicaNeural` is the default and `fil-PH-AngeloNeural` is also supported.
+## Speech architecture and privacy
 
-The same Speech resource powers three features:
+The browser never receives the long-lived Azure resource key. Server routes use it to synthesize allow-listed curriculum audio and to exchange it for a short-lived Speech authorization token. During a microphone check, the browser sends live audio directly to Azure Speech using that temporary token.
 
-- Filipino neural text to speech for full phrases and tap-to-hear words.
-- Filipino (`fil-PH`) speech recognition with meaning-aware transcript matching.
-- English (`en-US`) scripted pronunciation assessment with accuracy, fluency, completeness, and word-level coaching.
+Salita does not save voice-check audio or transcripts. Record-and-compare clips stay in the current tab. Before exposing a self-hosted copy publicly, add durable authentication, distributed rate limiting, Azure quotas, and cost alerts; the included in-memory rate guard is only a best-effort safeguard for a restricted deployment.
 
-Azure does not currently offer Pronunciation Assessment for Filipino. Salita therefore labels Filipino results as a **speech match**, never as an accent or native-pronunciation score. Stress, glottal stops, tapped `r`, and fine vowel quality remain listen-and-compare skills.
+Never commit a real key, place one in a `NEXT_PUBLIC_` variable, or paste one into an issue. See the [deployment tutorial](docs/SETUP_AND_DEPLOYMENT.md) for configuration and key-rotation steps.
 
-The Azure resource key stays on the server. For microphone checks, the server exchanges it for a short-lived Azure authorization token; the browser streams live microphone audio directly to Azure Speech. The token is temporary but grants general Speech-resource access during its lifetime, so keep Sites sign-in enabled and configure Azure usage quotas and cost alerts. The route's local rate guard is only best-effort across Cloudflare Worker instances.
+## Teaching approach
 
-Salita does not persist voice-check audio or transcripts. Record-and-compare clips remain only in the current tab.
+The curriculum moves from sound and sentence pattern to controlled practice, reading/listening in context, and finally learner production. It takes methodological inspiration from _Basic Tagalog for Foreigners and Non-Tagalogs_ by Paraluman S. Aspillera—especially its attention to sound, pattern practice, grammar, and graduated dialogue—while using newly written explanations, examples, and exercises for this app.
 
-Only bundled curriculum phrases and words can be synthesized, and the token endpoint accepts only known voice exercises. Fixed synthesized audio is cached to reduce latency and Speech usage.
+The content favors useful contemporary conversation, including polite forms and common casual variants, while explaining where register or context changes the best choice. No finite course can guarantee fluency by itself; Salita is designed as a durable foundation and daily practice system to pair with regular listening and real conversation.
 
-Do not rename the key to a `NEXT_PUBLIC_` variable or commit a real credential.
+## Technology
+
+- React 19, TypeScript, Vinext, and Vite
+- Cloudflare Workers-compatible server routes
+- Azure AI Speech SDK
+- Tailwind CSS and reusable UI components
+- Node's built-in test runner, Oxlint, and TypeScript checks
+
+## Project status
+
+Salita is an early learning release. The bundled course and local progress model are usable now; cloud synchronization, teacher review, and an account-backed cross-device profile are not implemented.
+
+No open-source license is included at this time. Public source availability does not by itself grant permission to copy, modify, or redistribute the code.
