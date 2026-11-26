@@ -77,7 +77,8 @@ import type { ActivityKind } from '@/lib/progress-events';
 import {
   isAudioPlaying,
   playFeedbackCue,
-  preloadFeedbackCues,
+  prepareFeedbackCues,
+  silenceFeedbackForRecording,
   stopFeedbackCue,
 } from '@/lib/feedback-cues';
 import { getSpeechClipId, segmentTagalogText } from '@/lib/tagalog-speech';
@@ -849,7 +850,7 @@ export default function SalitaApp({
   initialTodayKey: string;
 }) {
   const [view, setView] = useState<View>('today');
-  useEffect(() => preloadFeedbackCues(), []);
+  useEffect(prepareFeedbackCues, []);
   const navigateToView = useCallback((nextView: View) => {
     setView(nextView);
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -936,6 +937,7 @@ export default function SalitaApp({
         mode: completed ? 'replay' : 'lesson',
         sessionId: crypto.randomUUID(),
       });
+      playFeedbackCue('start');
       window.scrollTo({ top: 0 });
     },
     [progress],
@@ -951,6 +953,7 @@ export default function SalitaApp({
       sessionId: crypto.randomUUID(),
       priorityReviewKey: reviewKey,
     });
+    playFeedbackCue('start');
     window.scrollTo({ top: 0 });
   }, []);
 
@@ -974,6 +977,7 @@ export default function SalitaApp({
       mode: 'mistakes',
       sessionId: crypto.randomUUID(),
     });
+    playFeedbackCue('start');
     window.scrollTo({ top: 0 });
   }, [progress.mistakes]);
 
@@ -985,6 +989,7 @@ export default function SalitaApp({
         unitId: unit.id,
         sessionId: crypto.randomUUID(),
       });
+      playFeedbackCue('start');
       window.scrollTo({ top: 0 });
     },
     [progress],
@@ -2898,16 +2903,19 @@ function VocabularyMatchGame({
           progress.completedDays.includes(localDateKey())
             ? 'complete'
             : 'streak',
-          !isAudioPlaying(audioRef.current),
+          isAudioPlaying(audioRef.current),
         );
       } else {
-        playFeedbackCue('correct', !isAudioPlaying(audioRef.current));
+        playFeedbackCue(
+          wasMissed ? 'recovered' : 'correct',
+          isAudioPlaying(audioRef.current),
+        );
       }
     } else {
       onAttempt(sessionId, reviewKey, 'wrong');
       setMissed((current) => new Set(current).add(word.id));
       setStatus('Not a match yet. Both cards are still available—try again.');
-      playFeedbackCue('retry', !isAudioPlaying(audioRef.current));
+      playFeedbackCue('retry', isAudioPlaying(audioRef.current));
       window.setTimeout(() => {
         matchingLockRef.current.delete(word.id);
         filipinoButtonRefs.current.get(word.id)?.focus();
@@ -3492,7 +3500,7 @@ function LessonExperience({
       );
       return;
     }
-    stopFeedbackCue();
+    const cueTail = silenceFeedbackForRecording();
     recordingRequestIdRef.current += 1;
     const recordingRequestId = recordingRequestIdRef.current;
     recordingPendingRef.current = true;
@@ -3537,6 +3545,7 @@ function LessonExperience({
         }),
       ]);
       if (permissionTimeout) clearTimeout(permissionTimeout);
+      if (cueTail) await cueTail;
       if (recordingRequestId !== recordingRequestIdRef.current) {
         stream.getTracks().forEach((track) => track.stop());
         return;
@@ -3697,11 +3706,11 @@ function LessonExperience({
         ? exercise.note
         : `A natural answer is “${exercise.correct}” ${exercise.note}`,
     });
-    if (!selfAssessed) {
+    if (!selfAssessed && !speechWasUnderstood) {
       playFeedbackCue(
-        isCorrect ? 'correct' : 'retry',
-        !isAudioPlaying(modelAudioRef.current) &&
-          !window.speechSynthesis?.speaking,
+        isCorrect ? (score.usedSupport ? 'recovered' : 'correct') : 'retry',
+        isAudioPlaying(modelAudioRef.current) ||
+          window.speechSynthesis?.speaking,
       );
     }
   };
@@ -3745,8 +3754,8 @@ function LessonExperience({
       setComplete(true);
       playFeedbackCue(
         progress.completedDays.includes(localDateKey()) ? 'complete' : 'streak',
-        !isAudioPlaying(modelAudioRef.current) &&
-          !window.speechSynthesis?.speaking,
+        isAudioPlaying(modelAudioRef.current) ||
+          window.speechSynthesis?.speaking,
       );
       window.scrollTo({ top: 0 });
       return;

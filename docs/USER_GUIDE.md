@@ -91,7 +91,7 @@ If you hear nothing:
 
 ## Adjust practice feedback
 
-Short cues mark correct answers, retries, completed sessions, and the first session that counts toward today's streak. On compatible phones, the same moments have a light vibration. Go to **Progress → Practice feedback** to change these settings for this device. You can still play Tagalog examples and replay your recordings with sound effects turned off.
+Short cues mark the start of practice, correct answers, successful voice checks, retries, and milestones. A softer success cue plays when you get an answer right with help or on another try. On compatible phones, these moments also have a light vibration. Go to **Progress → Practice feedback** to change these settings for this device. You can still play Tagalog examples and replay your recordings with sound effects turned off.
 
 ## Use Filipino and English microphone coaching
 

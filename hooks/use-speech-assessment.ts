@@ -1,6 +1,9 @@
 'use client';
 
-import { stopFeedbackCue } from '@/lib/feedback-cues';
+import {
+  playFeedbackCue,
+  silenceFeedbackForRecording,
+} from '@/lib/feedback-cues';
 import type { PronunciationPractice } from '@/lib/local-recognition-client';
 import { getSyllableExercise, syllableTarget } from '@/lib/syllable-practice';
 
@@ -170,7 +173,7 @@ export function useSpeechAssessment({
       attemptCountRef.current[language] += 1;
       const attemptNumber = attemptCountRef.current[language];
       cleanUp();
-      stopFeedbackCue();
+      const cueTail = silenceFeedbackForRecording();
       onBeforeStart();
       setState((current) => ({
         ...current,
@@ -239,7 +242,7 @@ export function useSpeechAssessment({
         streamRef.current = stream;
         setState((current) => ({ ...current, phase: 'connecting' }));
         armTimeout('speech', 20_000);
-        await Promise.race([audioReady, interrupted]);
+        await Promise.race([Promise.all([audioReady, cueTail]), interrupted]);
 
         const { recognizeOnDevice } =
           await import('@/lib/local-recognition-client');
@@ -297,6 +300,18 @@ export function useSpeechAssessment({
             error: null,
           };
         });
+        const accepted = exercise
+          ? practice?.syllables?.stress === 'expected' &&
+            practice.syllables.catch !== 'unclear'
+          : language === 'fil-PH' &&
+            (result.level === 'verified' || result.level === 'understood');
+        if (accepted) {
+          playFeedbackCue(
+            result.level === 'understood' || attemptNumber > 1
+              ? 'recovered'
+              : 'correct',
+          );
+        }
       } catch (error) {
         if (attemptId !== attemptIdRef.current) return;
         if (timedOut) {
