@@ -609,15 +609,15 @@ export function assessSpeechResult(
     target.kind === 'pronunciation' &&
     target.language === 'en-US' &&
     !pronunciation
-      ? 'Azure recognized words but returned no acoustic pronunciation evidence. Nothing was scored.'
+      ? 'The transcript is available. English pronunciation scoring requires acoustic evidence, so this attempt was unscored.'
       : insufficientAcousticEvidence
         ? 'The acoustic evidence was too weak for a fair pronunciation result. Listen once and try again; nothing was counted against you.'
         : best.contrast
           ? best.contrast.expected.length
             ? `Keep the meaning-bearing word${best.contrast.expected.length === 1 ? '' : 's'} “${best.contrast.expected.join(', ')}.”`
-            : `Azure heard “${best.contrast.heard.join(', ')},” which changes the intended meaning. Try the model again.`
+            : `Salita heard “${best.contrast.heard.join(', ')},” which changes the intended meaning. Try the model again.`
           : usedAlternateHypothesis
-            ? 'Azure returned this as a close alternate match. Treat it as understood and try once more for confirmation.'
+            ? 'The speech engine returned a close alternate match. Treat it as understood and try once more for confirmation.'
             : best.optionalMissing.includes('po')
               ? 'The words were understood. Add “po” to keep this phrase polite.'
               : best.optionalMissing.includes('lang')
@@ -627,7 +627,7 @@ export function assessSpeechResult(
                   : level === 'understood' && best.delta.extraWords.length > 0
                     ? `The main idea was understood. Compare “${best.delta.extraWords[0]}” with the model, then try once more.`
                     : target.language === 'fil-PH'
-                      ? 'Azure checks the intended Filipino words and gives pronunciation coaching; it does not require a native accent.'
+                      ? 'The voice check compares the words it heard with the prompt.'
                       : 'English scores are coaching signals, not a judgment of your accent.';
 
   return {

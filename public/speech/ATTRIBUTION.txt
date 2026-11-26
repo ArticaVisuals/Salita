@@ -1,0 +1,9 @@
+Salita Tagalog lesson recordings
+Generated with Meta's Massively Multilingual Speech Tagalog checkpoint.
+Model: https://huggingface.co/facebook/mms-tts-tgl
+Model license: Creative Commons Attribution-NonCommercial 4.0 International.
+https://creativecommons.org/licenses/by-nc/4.0/
+These clips were synthesized from Salita curriculum text for noncommercial learning.
+
+To regenerate: run scripts/generate-tagalog-audio.py from the checkout with
+Node.js, FFmpeg, and a Python environment with torch and transformers.

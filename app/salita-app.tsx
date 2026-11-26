@@ -37,6 +37,8 @@ import {
 import Image from 'next/image';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { FeedbackSettings } from '@/components/feedback-settings';
+import { SyllablePractice } from '@/components/syllable-practice';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import {
@@ -72,7 +74,13 @@ import {
 } from '@/lib/progress';
 import { useSyncedProgress } from '@/hooks/use-synced-progress';
 import type { ActivityKind } from '@/lib/progress-events';
-import { segmentTagalogText } from '@/lib/tagalog-speech';
+import {
+  isAudioPlaying,
+  playFeedbackCue,
+  preloadFeedbackCues,
+  stopFeedbackCue,
+} from '@/lib/feedback-cues';
+import { getSpeechClipId, segmentTagalogText } from '@/lib/tagalog-speech';
 import type { SpeechAssessmentLanguage } from '@/lib/speech-assessment';
 
 type View = 'today' | 'learn' | 'review' | 'progress';
@@ -157,18 +165,18 @@ const REGISTER_STYLES: Record<Register, string> = {
   polite: 'bg-[var(--f-green-1)] text-[var(--f-green-4)]',
   casual: 'bg-[var(--f-yellow-1)] text-[#6a5000]',
   formal: 'bg-[var(--f-blue-3)] text-[#183f7b]',
-  Taglish: 'bg-[var(--f-pink-3)] text-[#9c0040]',
+  Taglish: 'bg-[var(--f-pink-3)] text-[var(--f-berry-ink)]',
 };
 
 const UNIT_COLORS = [
-  ['bg-[var(--f-pink-3)]', 'text-[#9c0040]'],
+  ['bg-[var(--f-pink-3)]', 'text-[var(--f-berry-ink)]'],
   ['bg-[var(--f-blue-3)]', 'text-[#183f7b]'],
   ['bg-[var(--f-yellow-1)]', 'text-[#6a5000]'],
   ['bg-[var(--f-green-1)]', 'text-[var(--f-green-4)]'],
   ['bg-[var(--f-cyan-1)]', 'text-[#005c83]'],
   ['bg-[#dabef3]', 'text-[#562284]'],
   ['bg-[#ffc64e]', 'text-[#5c3500]'],
-  ['bg-[#fcabb4]', 'text-[#71000f]'],
+  ['bg-[var(--f-error-bg)]', 'text-[#71000f]'],
 ] as const;
 
 function normalizeAnswer(value: string) {
@@ -841,6 +849,7 @@ export default function SalitaApp({
   initialTodayKey: string;
 }) {
   const [view, setView] = useState<View>('today');
+  useEffect(() => preloadFeedbackCues(), []);
   const navigateToView = useCallback((nextView: View) => {
     setView(nextView);
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -927,7 +936,7 @@ export default function SalitaApp({
         mode: completed ? 'replay' : 'lesson',
         sessionId: crypto.randomUUID(),
       });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0 });
     },
     [progress],
   );
@@ -942,7 +951,7 @@ export default function SalitaApp({
       sessionId: crypto.randomUUID(),
       priorityReviewKey: reviewKey,
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0 });
   }, []);
 
   const startMistakes = useCallback(() => {
@@ -965,7 +974,7 @@ export default function SalitaApp({
       mode: 'mistakes',
       sessionId: crypto.randomUUID(),
     });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0 });
   }, [progress.mistakes]);
 
   const startVocabulary = useCallback(
@@ -976,7 +985,7 @@ export default function SalitaApp({
         unitId: unit.id,
         sessionId: crypto.randomUUID(),
       });
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo({ top: 0 });
     },
     [progress],
   );
@@ -1148,7 +1157,7 @@ export default function SalitaApp({
     return (
       <main className="grid min-h-dvh place-items-center bg-background px-5 text-foreground">
         <section className="text-center" aria-live="polite">
-          <span className="mx-auto grid size-14 place-items-center rounded-[16px] bg-primary text-black">
+          <span className="mx-auto grid size-14 place-items-center rounded-[16px] bg-primary text-primary-foreground">
             <Sparkles className="size-6" />
           </span>
           <p className="mt-4 text-sm font-black">Opening your learning path…</p>
@@ -1395,17 +1404,17 @@ function AppHeader({
   const { current } = deriveStreaks(progress.completedDays, todayKey);
 
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-card/95 backdrop-blur">
+    <header className="sticky top-0 z-30 border-b border-border bg-card">
       <div className="mx-auto flex h-18 max-w-6xl items-center justify-between gap-8 px-5 lg:px-8">
         <button
           onClick={() => onNavigate('today')}
           className="flex min-h-11 items-center gap-2.5 no-underline"
           aria-label="Salita home"
         >
-          <span className="grid size-9 place-items-center rounded-[8px] bg-primary text-black">
+          <span className="grid size-9 place-items-center rounded-[8px] bg-primary text-primary-foreground">
             <Sparkles className="size-5" strokeWidth={2.6} />
           </span>
-          <span className="text-[22px] font-black tracking-[-0.045em]">
+          <span className="text-[22px] font-black tracking-[-0.04em]">
             salita.
           </span>
         </button>
@@ -1419,7 +1428,7 @@ function AppHeader({
               key={item.id}
               onClick={() => onNavigate(item.id)}
               aria-current={view === item.id ? 'page' : undefined}
-              className={`relative flex h-full items-center gap-2 text-sm font-black transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary ${
+              className={`relative flex h-full items-center gap-2 text-sm font-bold transition-colors after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-primary ${
                 view === item.id
                   ? 'text-foreground after:opacity-100'
                   : 'text-muted-foreground after:opacity-0 hover:text-foreground'
@@ -1437,8 +1446,11 @@ function AppHeader({
             className="flex min-h-11 items-center gap-2 rounded-full bg-[var(--f-yellow-1)] px-3 text-sm font-black focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring"
             aria-label={`${current} day streak. Open progress.`}
           >
-            <Flame className="size-4 fill-[var(--f-yellow-4)] text-[var(--f-yellow-4)]" />
-            <span>{current}</span>
+            <Flame
+              className="size-4 fill-[var(--f-yellow-4)] text-[#5c4a00]"
+              aria-hidden="true"
+            />
+            <span className="tabular-nums">{current}</span>
           </button>
           <button
             onClick={() => onNavigate('progress')}
@@ -1463,7 +1475,7 @@ function MobileNav({
   return (
     <nav
       aria-label="Main navigation"
-      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card/96 pb-[max(10px,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-2 backdrop-blur lg:hidden"
+      className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-card pb-[max(10px,env(safe-area-inset-bottom))] pl-[max(0.5rem,env(safe-area-inset-left))] pr-[max(0.5rem,env(safe-area-inset-right))] pt-2 lg:hidden"
     >
       <div className="mx-auto flex max-w-md items-center justify-around">
         {NAV_ITEMS.map((item) => (
@@ -1471,9 +1483,9 @@ function MobileNav({
             key={item.id}
             onClick={() => onNavigate(item.id)}
             aria-current={view === item.id ? 'page' : undefined}
-            className={`flex min-h-13 min-w-18 flex-col items-center justify-center gap-1 rounded-[8px] px-2 text-[11px] font-black ${
+            className={`flex min-h-13 min-w-17 flex-col items-center justify-center gap-1 rounded-[8px] px-2 text-xs font-bold focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring ${
               view === item.id
-                ? 'bg-[var(--f-pink-3)] text-[#9c0040]'
+                ? 'bg-[var(--f-pink-3)] text-[var(--f-berry-ink)]'
                 : 'text-muted-foreground'
             }`}
           >
@@ -1528,54 +1540,32 @@ function TodayView({
   return (
     <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_316px]">
       <section>
-        <div className="mb-6 flex items-end justify-between gap-4">
-          <div>
-            <p className="mb-1 text-xs font-black uppercase tracking-[0.14em] text-muted-foreground">
-              Day {journeyDay} · Daily path
-            </p>
-            <h1 className="text-3xl font-black tracking-[-0.045em] sm:text-4xl">
-              Magandang araw!
-            </h1>
-            <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground sm:text-base">
-              Build useful Tagalog (Filipino) from sounds and sentence structure
-              to real conversation.
-            </p>
-          </div>
-          <span className="hidden rounded-[5px] bg-[var(--f-green-1)] px-3 py-2 text-xs font-black text-[var(--f-green-4)] sm:inline-flex">
-            {progress.xp} XP total
-          </span>
+        <div className="mb-6">
+          <h1
+            lang="fil"
+            className="text-3xl font-black tracking-[-0.04em] sm:text-4xl"
+          >
+            Magandang araw!
+          </h1>
+          <p className="mt-2 text-sm font-medium text-muted-foreground tabular-nums">
+            Day {journeyDay} · {progress.xp} XP total
+          </p>
         </div>
 
-        <article className="relative overflow-hidden rounded-[24px] bg-[var(--f-driver-bg)] p-6 text-[#10066c] shadow-[0_4px_20px_rgba(25,1,52,0.14)] sm:p-8">
-          <div
-            className="absolute -right-8 -top-12 size-56 rounded-full border-[24px] border-white/18"
-            aria-hidden="true"
-          />
-          <div className="relative z-10 max-w-xl">
-            <div className="mb-6 flex items-center gap-2 text-sm font-black text-[#10066c]">
-              <span className="grid size-8 place-items-center rounded-full bg-white/40">
-                <MessageCircle className="size-4" />
-              </span>
-              Everyday conversation
-            </div>
-            <p className="mb-2 text-sm font-black">
-              Unit {unit.number} · Lesson {lesson.order} of 6 · {lesson.minutes}{' '}
-              min
-            </p>
+        <article className="rounded-[16px] border border-[#d6e2f2] bg-[var(--f-blue-3)] p-6 text-[#203653] sm:p-8">
+          <div className="max-w-xl">
             <h2
               lang="fil"
-              className="text-3xl font-black leading-tight tracking-[-0.045em] sm:text-[40px]"
+              className="text-3xl font-black leading-tight tracking-[-0.04em] sm:text-[40px]"
             >
               {unit.titleFil}
             </h2>
-            <p className="mt-3 max-w-md text-base leading-6 text-[#10066c]">
-              {unit.description}
+            <p className="mt-1.5 text-sm font-medium text-[#45617f] tabular-nums">
+              Unit {unit.number} · Lesson {lesson.order} of 6 · {lesson.minutes}{' '}
+              min
             </p>
-            <p className="mt-3 max-w-md rounded-[8px] bg-white/30 px-3 py-2 text-sm font-bold">
-              {lesson.title}: {lesson.objective}
-            </p>
-            <p className="mt-3 text-xs font-black uppercase tracking-[0.09em]">
-              Sound · Grammar · Reading · Conversation
+            <p className="mt-5 max-w-md text-sm leading-6 sm:text-base">
+              <strong>{lesson.title}.</strong> {lesson.objective}
             </p>
             <div className="mt-6 flex flex-wrap items-center gap-4">
               {dueCount ? (
@@ -1583,7 +1573,7 @@ function TodayView({
                   <Button
                     size="lg"
                     onClick={() => onNavigate('review')}
-                    className="h-12 rounded-[5px] bg-primary px-5 text-base font-black text-black hover:bg-[var(--f-pink-light)]"
+                    className="h-12 rounded-lg px-5 text-base font-bold"
                   >
                     Review {dueCount} due <RefreshCcw className="ml-1 size-4" />
                   </Button>
@@ -1591,7 +1581,7 @@ function TodayView({
                     variant="outline"
                     size="lg"
                     onClick={() => onStart(unit.id, lesson.id)}
-                    className="h-12 rounded-[5px] border-[#10066c]/30 bg-white/35 px-5 font-black text-[#10066c]"
+                    className="h-12 rounded-lg border-[#b6cbe4] bg-white/60 px-5 font-bold text-[#203653]"
                   >
                     New lesson
                   </Button>
@@ -1600,18 +1590,12 @@ function TodayView({
                 <Button
                   size="lg"
                   onClick={() => onStart(unit.id, lesson.id)}
-                  className="h-12 rounded-[5px] bg-primary px-5 text-base font-black text-black hover:bg-[var(--f-pink-light)]"
+                  className="h-12 rounded-lg px-5 text-base font-bold"
                 >
                   {completedInUnit ? 'Continue lesson' : 'Start lesson'}
                   <ArrowRight className="ml-1 size-4" />
                 </Button>
               )}
-              <div className="flex items-center gap-2 text-sm font-black">
-                <Star className="size-4 fill-[var(--f-yellow-3)] text-[#5c4a00]" />
-                {dueCount
-                  ? 'Recall first, then add new material'
-                  : 'Up to 10 XP per scored prompt'}
-              </div>
             </div>
           </div>
         </article>
@@ -1630,7 +1614,7 @@ function TodayView({
               label: 'Magsalita',
               detail: 'Answer out loud',
               color: 'bg-[var(--f-pink-3)]',
-              ink: 'text-[#9c0040]',
+              ink: 'text-[var(--f-berry-ink)]',
             },
             {
               icon: BookOpen,
@@ -1645,12 +1629,12 @@ function TodayView({
               className="flex min-h-18 items-center gap-3 rounded-[8px] border border-border bg-card p-4 text-left"
             >
               <span
-                className={`grid size-10 shrink-0 place-items-center rounded-[8px] ${color} ${ink}`}
+                className={`grid size-9 shrink-0 place-items-center rounded-[8px] ${color} ${ink}`}
               >
-                <Icon className="size-5" strokeWidth={2.4} />
+                <Icon className="size-5" strokeWidth={2} aria-hidden="true" />
               </span>
               <span>
-                <span lang="fil" className="block text-[15px] font-black">
+                <span lang="fil" className="block text-[15px] font-bold">
                   {label}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
@@ -1738,66 +1722,17 @@ function TodayView({
 }
 
 function VoiceConnectionCard() {
-  const [voice, setVoice] = useState<{
-    configured: boolean;
-    voice: string | null;
-  } | null>(null);
-
-  useEffect(() => {
-    const controller = new AbortController();
-    void fetch('/api/speech', {
-      headers: { Accept: 'application/json' },
-      signal: controller.signal,
-    })
-      .then((response) => response.json())
-      .then((value: unknown) => {
-        if (!value || typeof value !== 'object' || !('configured' in value)) {
-          return;
-        }
-        const result = value as { configured: unknown; voice?: unknown };
-        setVoice({
-          configured: result.configured === true,
-          voice: typeof result.voice === 'string' ? result.voice : null,
-        });
-      })
-      .catch(() => {
-        // Audio playback provides its own actionable fallback if status is unavailable.
-      });
-    return () => controller.abort();
-  }, []);
-
-  const connected = voice?.configured === true;
   return (
     <section className="rounded-[16px] border border-border bg-card p-5">
       <div className="flex items-start gap-3">
-        <span
-          className={`grid size-10 shrink-0 place-items-center rounded-[8px] ${connected ? 'bg-[var(--f-green-1)] text-[var(--f-green-4)]' : 'bg-[var(--f-blue-3)] text-[#183f7b]'}`}
-        >
+        <span className="grid size-10 shrink-0 place-items-center rounded-[8px] bg-[var(--f-blue-3)] text-[#183f7b]">
           <Volume2 className="size-5" />
         </span>
         <div>
-          <div className="flex flex-wrap items-center gap-2">
-            <p className="font-black">Azure speech</p>
-            <Tag
-              className={
-                voice === null
-                  ? 'bg-muted text-muted-foreground'
-                  : connected
-                    ? 'bg-[var(--f-green-1)] text-[var(--f-green-4)]'
-                    : 'bg-[var(--f-yellow-1)] text-[#6a5000]'
-              }
-            >
-              {voice === null
-                ? 'Checking'
-                : connected
-                  ? 'Configured'
-                  : 'Setup needed'}
-            </Tag>
-          </div>
+          <p className="font-black">Audio and voice checks</p>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            {connected
-              ? `Configured for the ${voice.voice?.replace('fil-PH-', '').replace('Neural', '') ?? 'Filipino'} neural voice, Filipino word recognition, and English pronunciation coaching.`
-              : 'Azure support is built in for Filipino audio and recognition plus English pronunciation coaching. Add one Speech key and region to activate it.'}
+            Lesson audio uses bundled Tagalog recordings. Voice checks compare
+            words on your device. The first check downloads the speech model.
           </p>
         </div>
       </div>
@@ -1849,13 +1784,22 @@ function StreakCard({
                   isDone
                     ? 'bg-[var(--f-success)] text-black'
                     : isToday
-                      ? 'border-2 border-primary bg-[var(--f-pink-3)] text-[#9c0040]'
+                      ? 'border border-primary bg-[var(--f-pink-3)]'
                       : 'bg-muted text-muted-foreground'
                 }`}
               >
-                {isDone ? <Check className="size-4" strokeWidth={3} /> : label}
+                {isDone && (
+                  <Check
+                    className="size-4"
+                    strokeWidth={3}
+                    aria-hidden="true"
+                  />
+                )}
               </time>
-              <span className="mt-1.5 block text-[10px] font-bold text-muted-foreground">
+              <span
+                aria-hidden="true"
+                className="mt-1.5 block text-xs font-medium text-muted-foreground"
+              >
                 {label}
               </span>
             </div>
@@ -1890,7 +1834,7 @@ function UnitRow({
     <button
       onClick={() => onStart(unit.id)}
       disabled={!unlocked}
-      className={`flex w-full items-center gap-4 rounded-[8px] border bg-card p-4 text-left transition hover:-translate-y-0.5 hover:shadow-[0_2px_10px_rgba(25,1,52,0.08)] focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring ${
+      className={`flex w-full items-center gap-4 rounded-[8px] border bg-card p-4 text-left transition-colors enabled:hover:bg-muted focus-visible:outline-3 focus-visible:outline-offset-2 focus-visible:outline-ring ${
         current ? 'border-[#3174d2]' : 'border-border'
       } disabled:cursor-not-allowed disabled:opacity-65`}
     >
@@ -1905,7 +1849,9 @@ function UnitRow({
             {unit.titleFil}
           </span>
           {current && (
-            <Tag className="bg-[var(--f-pink-3)] text-[#9c0040]">Current</Tag>
+            <Tag className="bg-[var(--f-pink-3)] text-[var(--f-berry-ink)]">
+              Current
+            </Tag>
           )}
           {complete && (
             <Tag className="bg-[var(--f-green-1)] text-[var(--f-green-4)]">
@@ -1951,7 +1897,7 @@ function LearnView({
     <section>
       <div className="grid overflow-hidden rounded-[24px] bg-card shadow-[0_2px_10px_rgba(25,1,52,0.08)] md:grid-cols-[1.05fr_.95fr]">
         <div className="flex flex-col justify-center p-6 sm:p-8">
-          <p className="text-xs font-black uppercase tracking-[0.14em] text-[#9c0040]">
+          <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--f-berry-ink)]">
             Salita path
           </p>
           <h1 className="mt-2 max-w-xl text-3xl font-black tracking-[-0.045em] sm:text-4xl">
@@ -2012,7 +1958,7 @@ function LearnView({
               icon: MessageCircle,
               title: 'Answer a situation',
               body: 'Choose replies by social context—polite, neutral, casual, or common Taglish.',
-              style: 'bg-[var(--f-pink-3)] text-[#9c0040]',
+              style: 'bg-[var(--f-pink-3)] text-[var(--f-berry-ink)]',
             },
             {
               icon: RefreshCcw,
@@ -2167,7 +2113,7 @@ function LearnView({
                   <Button
                     onClick={() => onStart(unit.id)}
                     disabled={!unlocked}
-                    className="min-h-11 rounded-[5px] bg-primary px-4 font-black text-black hover:bg-[var(--f-pink-light)]"
+                    className="min-h-11 rounded-lg px-4 font-bold"
                   >
                     {!unlocked
                       ? 'Locked'
@@ -2252,25 +2198,23 @@ function ReviewView({
   return (
     <section className="mx-auto max-w-4xl">
       <div className="mb-7">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-[#9c0040]">
-          Spaced review
-        </p>
         <h1
           lang="fil"
-          className="mt-2 text-3xl font-black tracking-[-0.045em] sm:text-4xl"
+          className="text-3xl font-black tracking-[-0.04em] sm:text-4xl"
         >
           Balikan ang mahalaga.
         </h1>
         <p className="mt-3 max-w-2xl text-sm leading-6 text-muted-foreground sm:text-base">
-          Pronunciation, grammar, reading, listening, and speaking are scheduled
-          separately. Recognizing a phrase does not automatically mark every
-          language skill strong.
+          Your review schedule tracks pronunciation, grammar, reading,
+          listening, and speaking separately.
         </p>
       </div>
 
+      <SyllablePractice />
+
       <div className="mb-8 grid gap-4 sm:grid-cols-2">
         <article className="rounded-[16px] border border-border bg-card p-5">
-          <span className="grid size-11 place-items-center rounded-[8px] bg-[#fcabb4] text-[#71000f]">
+          <span className="grid size-11 place-items-center rounded-[8px] bg-[var(--f-error-bg)] text-[#71000f]">
             <TriangleAlert className="size-5" />
           </span>
           <p className="mt-4 text-xs font-black uppercase tracking-[0.1em] text-muted-foreground">
@@ -2287,7 +2231,7 @@ function ReviewView({
           <Button
             onClick={onStartMistakes}
             disabled={!dueMistakes}
-            className="mt-5 min-h-11 rounded-[5px] bg-primary px-4 font-black text-black hover:bg-[var(--f-pink-light)]"
+            className="mt-5 min-h-11 rounded-lg px-4 font-bold"
           >
             <RefreshCcw /> Practice mistakes
           </Button>
@@ -2342,7 +2286,7 @@ function ReviewView({
                 ? onStartMistakes
                 : () => onStartLesson(progress.activeUnitId)
             }
-            className="mt-6 min-h-12 rounded-[5px] bg-primary px-5 font-black text-black hover:bg-[var(--f-pink-light)]"
+            className="mt-6 min-h-12 rounded-lg px-5 font-bold"
           >
             {dueMistakes ? 'Practice mistakes' : 'Start today’s lesson'}{' '}
             <ArrowRight />
@@ -2490,7 +2434,7 @@ function ProgressView({
   return (
     <section>
       <div className="mb-7">
-        <p className="text-xs font-black uppercase tracking-[0.14em] text-[#9c0040]">
+        <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--f-berry-ink)]">
           Your progress
         </p>
         <h1 className="mt-2 text-3xl font-black tracking-[-0.045em] sm:text-4xl">
@@ -2502,6 +2446,7 @@ function ProgressView({
         </p>
       </div>
 
+      <FeedbackSettings />
       <IPhoneInstallCard installed={isInstalledApp} />
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -2518,7 +2463,7 @@ function ProgressView({
             value: `${best}`,
             suffix: best === 1 ? 'day' : 'days',
             icon: Star,
-            style: 'bg-[var(--f-pink-3)] text-[#9c0040]',
+            style: 'bg-[var(--f-pink-3)] text-[var(--f-berry-ink)]',
           },
           {
             label: 'Sessions',
@@ -2949,11 +2894,20 @@ function VocabularyMatchGame({
           modes: ['reading'],
           kind: 'vocab-match',
         });
+        playFeedbackCue(
+          progress.completedDays.includes(localDateKey())
+            ? 'complete'
+            : 'streak',
+          !isAudioPlaying(audioRef.current),
+        );
+      } else {
+        playFeedbackCue('correct', !isAudioPlaying(audioRef.current));
       }
     } else {
       onAttempt(sessionId, reviewKey, 'wrong');
       setMissed((current) => new Set(current).add(word.id));
       setStatus('Not a match yet. Both cards are still available—try again.');
+      playFeedbackCue('retry', !isAudioPlaying(audioRef.current));
       window.setTimeout(() => {
         matchingLockRef.current.delete(word.id);
         filipinoButtonRefs.current.get(word.id)?.focus();
@@ -2992,9 +2946,9 @@ function VocabularyMatchGame({
   );
 
   const playWord = (word: VocabularyItem) => {
+    stopFeedbackCue();
     audioRef.current?.pause();
-    const query = new URLSearchParams({ text: word.fil, speed: 'normal' });
-    const audio = new Audio(`/api/speech?${query}`);
+    const audio = new Audio(`/speech/${getSpeechClipId(word.fil)}.mp3`);
     audioRef.current = audio;
     setStatus(`Playing “${word.fil}”…`);
     audio.onended = () => setStatus(`Now match “${word.fil}.”`);
@@ -3018,7 +2972,7 @@ function VocabularyMatchGame({
           <span className="mx-auto grid size-16 place-items-center rounded-full bg-[var(--f-green-1)] text-[var(--f-green-4)]">
             <CheckCircle2 className="size-7" />
           </span>
-          <p className="mt-5 text-xs font-black uppercase tracking-[0.14em] text-[#9c0040]">
+          <p className="mt-5 text-xs font-black uppercase tracking-[0.14em] text-[var(--f-berry-ink)]">
             Quick Match
           </p>
           <h1
@@ -3042,7 +2996,7 @@ function VocabularyMatchGame({
           </div>
           <Button
             onClick={onExit}
-            className="mt-7 min-h-12 w-full rounded-[5px] bg-primary font-black text-black hover:bg-[var(--f-pink-light)]"
+            className="mt-7 min-h-12 w-full rounded-lg font-bold"
           >
             Done <ArrowRight />
           </Button>
@@ -3065,7 +3019,7 @@ function VocabularyMatchGame({
             <X className="size-5" />
           </Button>
           <div className="flex-1">
-            <p className="text-xs font-black uppercase tracking-[0.12em] text-[#9c0040]">
+            <p className="text-xs font-black uppercase tracking-[0.12em] text-[var(--f-berry-ink)]">
               Unit {unit.number} · Quick Match
             </p>
             <p className="mt-0.5 font-black">{unit.title}</p>
@@ -3427,6 +3381,7 @@ function LessonExperience({
 
   const playPhrase = async (text: string, slow = false) => {
     if (speechCoach.busy || recording || recordingPending) return;
+    stopFeedbackCue();
     const playbackId = playbackIdRef.current + 1;
     playbackIdRef.current = playbackId;
     speechRequestRef.current?.abort();
@@ -3445,20 +3400,15 @@ function LessonExperience({
       );
       revealIfNeeded();
     };
-    setVoiceStatus('Loading the Filipino neural voice…');
-    const query = new URLSearchParams({
-      text,
-      speed: slow ? 'slow' : 'normal',
-    });
-    const audio = new Audio(`/api/speech?${query}`);
+    setVoiceStatus('Loading Tagalog audio…');
+    const audio = new Audio(`/speech/${getSpeechClipId(text)}.mp3`);
+    audio.playbackRate = slow ? 0.75 : 1;
     audio.preload = 'auto';
     modelAudioRef.current = audio;
     audio.onplay = () => {
       if (playbackId === playbackIdRef.current) {
         setVoiceStatus(
-          slow
-            ? 'Playing the Filipino neural voice slowly…'
-            : 'Playing the Filipino neural voice…',
+          slow ? 'Playing Tagalog audio slowly…' : 'Playing Tagalog audio…',
         );
       }
     };
@@ -3475,10 +3425,25 @@ function LessonExperience({
     try {
       await audio.play();
     } catch {
-      if (playbackId === playbackIdRef.current) {
+      if (playbackId === playbackIdRef.current && !audio.error) {
         setVoiceStatus('Tap the word or phrase once more to start audio.');
       }
     }
+  };
+
+  const playPracticeClip = (url: string) => {
+    if (speechCoach.busy || recording || recordingPending) return;
+    stopFeedbackCue();
+    playbackIdRef.current += 1;
+    modelAudioRef.current?.pause();
+    window.speechSynthesis?.cancel();
+    const audio = new Audio(url);
+    modelAudioRef.current = audio;
+    setVoiceStatus('');
+    void audio.play().catch(() => {
+      if (modelAudioRef.current === audio)
+        setVoiceStatus('Tap the clip again to play it.');
+    });
   };
 
   const playWord = (word: string) => {
@@ -3527,6 +3492,7 @@ function LessonExperience({
       );
       return;
     }
+    stopFeedbackCue();
     recordingRequestIdRef.current += 1;
     const recordingRequestId = recordingRequestIdRef.current;
     recordingPendingRef.current = true;
@@ -3731,6 +3697,13 @@ function LessonExperience({
         ? exercise.note
         : `A natural answer is “${exercise.correct}” ${exercise.note}`,
     });
+    if (!selfAssessed) {
+      playFeedbackCue(
+        isCorrect ? 'correct' : 'retry',
+        !isAudioPlaying(modelAudioRef.current) &&
+          !window.speechSynthesis?.speaking,
+      );
+    }
   };
 
   const continueLesson = () => {
@@ -3770,12 +3743,17 @@ function LessonExperience({
             : undefined,
       });
       setComplete(true);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      playFeedbackCue(
+        progress.completedDays.includes(localDateKey()) ? 'complete' : 'streak',
+        !isAudioPlaying(modelAudioRef.current) &&
+          !window.speechSynthesis?.speaking,
+      );
+      window.scrollTo({ top: 0 });
       return;
     }
     setIndex((value) => value + 1);
     resetPromptState();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo({ top: 0 });
   };
 
   if (!exercise) {
@@ -3792,7 +3770,7 @@ function LessonExperience({
           </p>
           <Button
             onClick={onExit}
-            className="mt-6 min-h-12 rounded-[5px] bg-primary px-5 font-black text-black hover:bg-[var(--f-pink-light)]"
+            className="mt-6 min-h-12 rounded-lg px-5 font-bold"
           >
             Back home
           </Button>
@@ -3816,7 +3794,7 @@ function LessonExperience({
           </span>
           <p
             lang="fil"
-            className="mt-6 text-xs font-black uppercase tracking-[0.14em] text-[#9c0040]"
+            className="mt-6 text-xs font-black uppercase tracking-[0.14em] text-[var(--f-berry-ink)]"
           >
             Tapos na!
           </p>
@@ -3869,7 +3847,7 @@ function LessonExperience({
               ) && (
                 <Button
                   onClick={() => onNext(next.unit.id, next.lesson.id)}
-                  className="min-h-12 flex-1 rounded-[5px] bg-primary font-black text-black hover:bg-[var(--f-pink-light)]"
+                  className="min-h-12 flex-1 rounded-lg font-bold"
                 >
                   {next.completedUnit ? 'Next unit' : 'Next lesson'}{' '}
                   <ArrowRight />
@@ -3921,7 +3899,7 @@ function LessonExperience({
       <div className="mx-auto flex min-h-[calc(100dvh-72px)] max-w-3xl flex-col px-5 pb-28 pt-8 sm:pt-10">
         <section className="flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className="text-xs font-black uppercase tracking-[0.14em] text-[#9c0040]">
+            <p className="text-xs font-black uppercase tracking-[0.14em] text-[var(--f-berry-ink)]">
               {exercise.eyebrow}
             </p>
             {exercise.isRetry && (
@@ -3949,6 +3927,7 @@ function LessonExperience({
               playPhrase={playPhrase}
               playWord={playWord}
               speechState={speechCoach.state}
+              playPracticeClip={playPracticeClip}
               speechBusy={speechCoach.busy}
               onStartSpeech={(language) =>
                 void speechCoach.start(exercise.baseId, language)
@@ -3982,7 +3961,7 @@ function LessonExperience({
             className={`mt-8 flex items-start gap-3 rounded-[8px] p-4 ${
               feedback.correct
                 ? 'bg-[var(--f-green-1)] text-[var(--f-green-4)]'
-                : 'bg-[#fcabb4] text-[#71000f]'
+                : 'bg-[var(--f-error-bg)] text-[#71000f]'
             }`}
           >
             {feedback.correct ? (
@@ -3997,7 +3976,7 @@ function LessonExperience({
           </output>
         )}
 
-        <div className="fixed inset-x-0 bottom-0 border-t border-border bg-card/96 pb-[max(16px,env(safe-area-inset-bottom))] pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] pt-4 backdrop-blur sm:static sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
+        <div className="fixed inset-x-0 bottom-0 border-t border-border bg-card pb-[max(16px,env(safe-area-inset-bottom))] pl-[max(1.25rem,env(safe-area-inset-left))] pr-[max(1.25rem,env(safe-area-inset-right))] pt-4 sm:static sm:mt-8 sm:border-0 sm:bg-transparent sm:px-0 sm:py-0">
           <div className="mx-auto flex max-w-3xl items-center justify-between gap-3">
             <Button
               variant="ghost"
@@ -4010,7 +3989,7 @@ function LessonExperience({
             {exercise.kind === 'vocabulary' ? (
               <Button
                 onClick={continueLesson}
-                className="min-h-12 min-w-36 rounded-[5px] bg-primary px-5 font-black text-black hover:bg-[var(--f-pink-light)]"
+                className="min-h-12 min-w-36 rounded-lg px-5 font-bold"
               >
                 I’m ready <ArrowRight />
               </Button>
@@ -4026,7 +4005,7 @@ function LessonExperience({
               <Button
                 disabled={!answerReady}
                 onClick={() => submitAnswer(false)}
-                className="min-h-12 min-w-36 rounded-[5px] bg-primary px-5 font-black text-black hover:bg-[var(--f-pink-light)] disabled:bg-border disabled:text-muted-foreground"
+                className="min-h-12 min-w-36 rounded-lg px-5 font-bold disabled:bg-border disabled:text-muted-foreground"
               >
                 Check answer
               </Button>
@@ -4038,20 +4017,26 @@ function LessonExperience({
   );
 }
 
-function SpeechAssessmentPanel({ state }: { state: SpeechSessionState }) {
+function SpeechAssessmentPanel({
+  state,
+  playPracticeClip,
+}: {
+  state: SpeechSessionState;
+  playPracticeClip: (url: string) => void;
+}) {
   const activeCopy: Partial<Record<SpeechSessionState['phase'], string>> = {
     'requesting-permission': 'Waiting for microphone permission…',
-    connecting: 'Connecting securely to Azure Speech…',
+    connecting: 'Preparing the microphone…',
     listening: 'Listening… Speak naturally; Salita stops after your phrase.',
-    scoring: 'Checking what Azure heard…',
+    scoring:
+      'Checking your speech on this device. The first check may take longer…',
   };
   const active = activeCopy[state.phase];
   if (active) {
     return (
       <output className="mt-4 flex items-center gap-3 rounded-[8px] bg-[var(--f-blue-3)] p-4 text-left text-sm font-bold text-[#183f7b]">
-        <span className="relative grid size-9 shrink-0 place-items-center rounded-full bg-[var(--f-driver-bg)] text-[#10066c]">
-          <span className="absolute inset-0 animate-ping rounded-full bg-[#83b7f5]/45" />
-          <Mic className="relative size-4" />
+        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[var(--f-driver-bg)] text-[#10066c]">
+          <Mic className="size-4" aria-hidden="true" />
         </span>
         <p aria-live="polite">{active}</p>
       </output>
@@ -4086,7 +4071,7 @@ function SpeechAssessmentPanel({ state }: { state: SpeechSessionState }) {
     : understood
       ? 'bg-[var(--f-yellow-1)] text-[#5c4a00]'
       : result.level === 'retry'
-        ? 'bg-[#fcabb4] text-[#71000f]'
+        ? 'bg-[var(--f-error-bg)] text-[#71000f]'
         : 'bg-muted text-muted-foreground';
 
   return (
@@ -4099,7 +4084,7 @@ function SpeechAssessmentPanel({ state }: { state: SpeechSessionState }) {
           <p className="text-[10px] font-black uppercase tracking-[0.1em]">
             {result.language === 'fil-PH'
               ? 'Filipino speech match'
-              : 'English pronunciation coaching'}
+              : 'English transcript'}
           </p>
           <p className="mt-1 font-black">{title}</p>
         </div>
@@ -4117,10 +4102,8 @@ function SpeechAssessmentPanel({ state }: { state: SpeechSessionState }) {
       )}
       {result.transcript && (
         <p className="mt-3 text-sm leading-5">
-          {result.usedAlternateHypothesis
-            ? 'Closest Azure match'
-            : 'Azure heard'}
-          : <strong>“{result.transcript}”</strong>
+          {result.usedAlternateHypothesis ? 'Closest match' : 'Salita heard'}:{' '}
+          <strong>“{result.transcript}”</strong>
         </p>
       )}
       {result.pronunciation && result.level !== 'unscored' && (
@@ -4168,7 +4151,84 @@ function SpeechAssessmentPanel({ state }: { state: SpeechSessionState }) {
       {result.reminder && (
         <p className="mt-3 text-xs leading-5">{result.reminder}</p>
       )}
+      {state.practice && (
+        <PronunciationPracticePanel
+          practice={state.practice}
+          playClip={playPracticeClip}
+        />
+      )}
     </output>
+  );
+}
+
+function PronunciationPracticePanel({
+  practice,
+  playClip,
+}: {
+  practice: NonNullable<SpeechSessionState['practice']>;
+  playClip: (url: string) => void;
+}) {
+  const clips = useRef<{ model: string; attempt: string } | null>(null);
+  useEffect(() => {
+    const model = practice.modelClip
+      ? URL.createObjectURL(practice.modelClip)
+      : practice.modelUrl;
+    const attempt = URL.createObjectURL(practice.attempt);
+    clips.current = { model, attempt };
+    return () => {
+      if (practice.modelClip) URL.revokeObjectURL(model);
+      URL.revokeObjectURL(attempt);
+      clips.current = null;
+    };
+  }, [practice]);
+
+  const { comparison, completeLine } = practice;
+  const focus = comparison?.focus;
+  return (
+    <div className="mt-4 rounded-[8px] bg-card p-4 text-foreground">
+      <p className="text-sm font-black">Pronunciation feedback</p>
+      {comparison ? (
+        <>
+          <p className="mt-2 text-xs leading-5">
+            {comparison.pace === 'similar'
+              ? 'Your pace was close to the model.'
+              : comparison.pace === 'slower'
+                ? 'You took longer than the model. Try linking the syllables more smoothly.'
+                : 'You spoke faster than the model. Try giving each syllable room.'}
+          </p>
+          <p className="mt-1 text-xs leading-5">
+            {focus
+              ? `The ${focus.position} sounded most different. Compare that section, then say the whole line again.`
+              : 'Compare the recordings for vowel sounds, syllable length, and stress.'}
+          </p>
+        </>
+      ) : (
+        <p className="mt-2 text-xs leading-5">
+          {completeLine
+            ? 'An automatic sound comparison was unavailable. You can still compare the recordings.'
+            : 'Repeat the full line for automatic sound feedback. You can replay this attempt now.'}
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          variant="outline"
+          onClick={() => clips.current && playClip(clips.current.model)}
+          className="min-h-11 rounded-[5px] font-black"
+        >
+          <Volume2 /> {focus ? 'Hear model section' : 'Hear model again'}
+        </Button>
+        <Button
+          variant="outline"
+          onClick={() => clips.current && playClip(clips.current.attempt)}
+          className="min-h-11 rounded-[5px] font-black"
+        >
+          <Play /> {focus ? 'Hear my section' : 'Hear my attempt'}
+        </Button>
+      </div>
+      <p className="mt-2 text-xs leading-5 text-muted-foreground">
+        This comparison helps you hear differences from one model voice.
+      </p>
+    </div>
   );
 }
 
@@ -4186,6 +4246,7 @@ function ExerciseBody({
   playPhrase,
   playWord,
   speechState,
+  playPracticeClip,
   speechBusy,
   onStartSpeech,
   onStopSpeech,
@@ -4213,6 +4274,7 @@ function ExerciseBody({
   playPhrase: (text: string, slow?: boolean) => void | Promise<void>;
   playWord: (word: string) => void | Promise<void>;
   speechState: SpeechSessionState;
+  playPracticeClip: (url: string) => void;
   speechBusy: boolean;
   onStartSpeech: (language: SpeechAssessmentLanguage) => void;
   onStopSpeech: () => void;
@@ -4377,13 +4439,16 @@ function ExerciseBody({
             {recordedUrl && (
               <Button
                 variant="ghost"
-                onClick={() => void new Audio(recordedUrl).play()}
+                onClick={() => playPracticeClip(recordedUrl)}
                 className="mx-auto mt-3 min-h-11 rounded-[5px] font-black text-[#183f7b]"
               >
                 <Play /> Compare my recording
               </Button>
             )}
-            <SpeechAssessmentPanel state={speechState} />
+            <SpeechAssessmentPanel
+              state={speechState}
+              playPracticeClip={playPracticeClip}
+            />
             <div className="mx-auto mt-5 max-w-xl rounded-[8px] bg-[var(--f-yellow-1)] p-4 text-left text-[#5c4a00]">
               <p className="text-xs font-black uppercase tracking-[0.1em]">
                 Syllable + stress guide
@@ -4394,10 +4459,7 @@ function ExerciseBody({
               <p className="mt-2 text-xs leading-5">{exercise.coach}</p>
             </div>
             <p className="mt-3 text-[11px] leading-5 text-muted-foreground">
-              Record & compare stays in this tab. A voice check sends live audio
-              securely to Azure for transcription; Salita does not retain the
-              audio or transcript. Filipino results check understood words—not
-              accent, stress, or a native-speaker pronunciation score.
+              Your recording stays in this tab.
             </p>
           </div>
         </section>
@@ -4488,7 +4550,7 @@ function ExerciseBody({
         <section className="rounded-[16px] border border-border bg-card p-5 sm:p-7">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <p className="text-xs font-black uppercase tracking-[0.1em] text-[#9c0040]">
+              <p className="text-xs font-black uppercase tracking-[0.1em] text-[var(--f-berry-ink)]">
                 Read for meaning
               </p>
               <h2 className="mt-1 text-xl font-black">
@@ -4558,7 +4620,7 @@ function ExerciseBody({
             </Button>
           </div>
           <p className="mt-2 text-xs font-bold" aria-live="polite">
-            {voiceStatus || 'Filipino neural voice · tap to listen'}
+            {voiceStatus || 'Tagalog audio · tap to listen'}
           </p>
           {showTranscript && (
             <div className="mt-4">
@@ -4614,7 +4676,7 @@ function ExerciseBody({
                         current.filter((index) => index !== tileIndex),
                       );
                     }}
-                    className="min-h-11 rounded-[5px] bg-[var(--f-pink-3)] px-3 py-2 text-sm font-black text-[#9c0040]"
+                    className="min-h-11 rounded-[5px] bg-[var(--f-pink-3)] px-3 py-2 text-sm font-black text-[var(--f-berry-ink)]"
                   >
                     {tile?.token}
                   </button>
@@ -4782,19 +4844,20 @@ function ExerciseBody({
               {voiceStatus}
             </p>
           )}
-          <SpeechAssessmentPanel state={speechState} />
+          <SpeechAssessmentPanel
+            state={speechState}
+            playPracticeClip={playPracticeClip}
+          />
           {speechState.result?.language === 'en-US' && (
             <p className="mt-2 text-xs font-bold text-[#183f7b]">
-              English is bonus pronunciation coaching. Check Tagalog to complete
-              this Tagalog speaking step.
+              English is optional transcript practice. Check Tagalog to complete
+              this speaking step.
             </p>
           )}
           {recordedUrl && (
             <Button
               variant="outline"
-              onClick={() => {
-                void new Audio(recordedUrl).play();
-              }}
+              onClick={() => playPracticeClip(recordedUrl)}
               className="mx-auto mt-4 min-h-11 rounded-[5px] font-black"
             >
               <Play /> Play my recording
@@ -4850,9 +4913,8 @@ function ExerciseBody({
           )}
         <div className="mt-5 flex items-start gap-2 rounded-[8px] bg-muted p-3 text-xs leading-5 text-muted-foreground">
           <LockKeyhole className="mt-0.5 size-4 shrink-0" />
-          Salita does not retain voice-check audio. Live audio goes securely to
-          Azure Speech for transcription. Record & compare clips remain only in
-          this tab. Mic or service failures never break your streak.
+          Microphone audio and transcripts stay in this tab. English practice
+          provides a transcript.
         </div>
         {showTranscript && (
           <HintPanel

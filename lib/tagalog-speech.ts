@@ -90,3 +90,15 @@ export function isAllowedSpeechText(value: string) {
     ALLOWED_SPEECH_TEXT.has(normalized)
   );
 }
+
+export function getCurriculumSpeechTexts() {
+  return [...ALLOWED_SPEECH_TEXT].filter(isAllowedSpeechText).sort();
+}
+
+export function getSpeechClipId(text: string) {
+  let hash = 2166136261;
+  for (const character of normalizeSpeechText(text)) {
+    hash = Math.imul(hash ^ character.codePointAt(0)!, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}

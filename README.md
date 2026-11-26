@@ -14,7 +14,7 @@ The interface stays in English so a new learner can navigate confidently, while 
 - A daily path with XP, streaks, skill strength, review scheduling, and session history.
 - Filipino neural text to speech for full models and tap-to-hear words.
 - Guided pronunciation work on vowels, stress, `ng`, vowel boundaries and glottal stops, the tapped `r`, linkers, and repeated syllables.
-- Filipino and English speech recognition with transcript-aware coaching and Azure word-level pronunciation assessment in both supported locales.
+- On-device Filipino and English speech recognition, with Tagalog word matching and English transcripts.
 - Controlled transformations, dialogues, listening checks, readings, and recall practice.
 - Quick Match vocabulary rounds and a durable Practice mistakes queue that requires clean recall on later days.
 - Installable iPhone PWA support and account-backed progress sync with an offline event queue.
@@ -40,7 +40,7 @@ cp .env.example .env.local
 npm run dev
 ```
 
-Open the local URL printed by the development server. The learning flow works without Azure credentials; cloud voices and microphone coaching require an Azure AI Speech resource configured in `.env.local`. The default localhost session is device-only. The Sites development plugin can simulate sign-in at `/signin-with-chatgpt?return_to=/` and exercise a development D1 database, but that rehearsal does not validate production ChatGPT identity or the live managed database.
+Open the local URL printed by the development server. Lesson audio and on-device voice checks work without a speech account. The first voice check downloads the multilingual speech model. The default localhost session is device-only. The Sites development plugin can simulate sign-in at `/signin-with-chatgpt?return_to=/` and exercise a development D1 database, but that rehearsal does not validate production ChatGPT identity or the live managed database.
 
 Run the release checks with:
 
@@ -54,7 +54,7 @@ npm audit --audit-level=high
 
 ## Speech architecture and privacy
 
-The browser never receives the long-lived Azure resource key. Server routes use it to synthesize allow-listed curriculum audio and to exchange it for a short-lived Speech authorization token. During a microphone check, the browser sends live audio directly to Azure Speech using that temporary token.
+The lesson player uses bundled [MMS Tagalog recordings](public/speech/ATTRIBUTION.txt), and microphone checks use Moonshine Tiny speech recognition on the device. The existing Azure server routes are optional and require separate runtime configuration.
 
 Salita does not save voice-check audio or transcripts. Record-and-compare clips stay in the current tab. Before exposing a separately self-hosted copy publicly, add trusted authentication headers, distributed rate limiting, Azure quotas, and cost alerts; the included in-memory rate guard is only a best-effort safeguard for a restricted deployment.
 
@@ -70,7 +70,7 @@ The content favors useful contemporary conversation, including polite forms and 
 
 - React 19, TypeScript, Vinext, and Vite
 - Cloudflare Workers-compatible server routes
-- Azure AI Speech SDK
+- Moonshine Tiny for on-device voice checks
 - Tailwind CSS and reusable UI components
 - Node's built-in test runner, Oxlint, and TypeScript checks
 

@@ -1,5 +1,9 @@
 'use client';
 
+import { stopFeedbackCue } from '@/lib/feedback-cues';
+import type { PronunciationPractice } from '@/lib/local-recognition-client';
+import { getSyllableExercise, syllableTarget } from '@/lib/syllable-practice';
+
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
@@ -31,6 +35,7 @@ export type SpeechSessionState = {
   results: Partial<Record<SpeechAssessmentLanguage, SpeechAssessmentResult>>;
   bestAttemptByLanguage: Partial<Record<SpeechAssessmentLanguage, number>>;
   retainedBest: boolean;
+  practice: PronunciationPractice | null;
   error: string | null;
 };
 
@@ -43,6 +48,7 @@ const INITIAL_STATE: SpeechSessionState = {
   results: {},
   bestAttemptByLanguage: {},
   retainedBest: false,
+  practice: null,
   error: null,
 };
 
@@ -59,19 +65,6 @@ function microphoneError(error: unknown) {
     }
   }
   return null;
-}
-
-function recognitionError(error: unknown) {
-  if (error && typeof error === 'object' && 'code' in error) {
-    const code = String(error.code);
-    if (code === 'SPEECH_NOT_CONFIGURED') {
-      return 'Azure microphone coaching still needs its Speech key and region. Use Record & compare for now.';
-    }
-    if (code === 'TOO_MANY_REQUESTS') {
-      return 'Please wait a moment before starting another voice check.';
-    }
-  }
-  return 'The speech service could not score this attempt. Try again or use Record & compare; this does not count against you.';
 }
 
 export function useSpeechAssessment({
@@ -120,13 +113,18 @@ export function useSpeechAssessment({
       phase: 'idle',
       result: null,
       retainedBest: false,
+      practice: null,
       error: 'Voice check stopped. Nothing was scored.',
     }));
   }, [cleanUp]);
 
   const start = useCallback(
     async (targetId: string, language: SpeechAssessmentLanguage) => {
-      const target = getSpeechAssessmentTarget(targetId, language);
+      const exercise =
+        language === 'fil-PH' ? getSyllableExercise(targetId) : null;
+      const target = exercise
+        ? syllableTarget(exercise)
+        : getSpeechAssessmentTarget(targetId, language);
       if (!target) {
         setState((current) => ({
           ...current,
@@ -154,11 +152,25 @@ export function useSpeechAssessment({
         return;
       }
 
+      if (
+        typeof AudioContext === 'undefined' ||
+        typeof MediaRecorder === 'undefined'
+      ) {
+        setState((current) => ({
+          ...current,
+          phase: 'error',
+          error:
+            'This browser cannot run voice checks. Open Salita in a current browser or use Record & compare.',
+        }));
+        return;
+      }
+
       attemptIdRef.current += 1;
       const attemptId = attemptIdRef.current;
       attemptCountRef.current[language] += 1;
       const attemptNumber = attemptCountRef.current[language];
       cleanUp();
+      stopFeedbackCue();
       onBeforeStart();
       setState((current) => ({
         ...current,
@@ -168,13 +180,14 @@ export function useSpeechAssessment({
         language,
         result: null,
         retainedBest: false,
+        practice: null,
         error: null,
       }));
 
       const controller = new AbortController();
       abortRef.current = controller;
-      let timedOut: 'permission' | 'connection' | 'speech' | null = null;
-      let listeningStarted = false;
+      let timedOut: 'permission' | 'speech' | 'scoring' | null = null;
+      let audioContext: AudioContext | undefined;
       const armTimeout = (
         stage: Exclude<typeof timedOut, null>,
         milliseconds: number,
@@ -187,6 +200,10 @@ export function useSpeechAssessment({
       };
 
       try {
+        const context = new AudioContext();
+        audioContext = context;
+        const audioReady = context.resume();
+        void audioReady.catch(() => {});
         armTimeout('permission', 15_000);
         const mediaRequest = navigator.mediaDevices.getUserMedia({
           audio: {
@@ -196,50 +213,61 @@ export function useSpeechAssessment({
             noiseSuppression: true,
           },
         });
-        void mediaRequest.then((lateStream) => {
-          if (controller.signal.aborted || attemptId !== attemptIdRef.current) {
-            lateStream.getTracks().forEach((track) => track.stop());
-          }
+        void mediaRequest.then(
+          (lateStream) => {
+            if (
+              controller.signal.aborted ||
+              attemptId !== attemptIdRef.current
+            ) {
+              lateStream.getTracks().forEach((track) => track.stop());
+            }
+          },
+          () => {},
+        );
+        const interrupted = new Promise<never>((_, reject) => {
+          controller.signal.addEventListener(
+            'abort',
+            () => reject(controller.signal.reason),
+            { once: true },
+          );
         });
-        const stream = await Promise.race([
-          mediaRequest,
-          new Promise<never>((_, reject) => {
-            controller.signal.addEventListener(
-              'abort',
-              () =>
-                reject(new DOMException('Voice check stopped.', 'AbortError')),
-              { once: true },
-            );
-          }),
-        ]);
+        const stream = await Promise.race([mediaRequest, interrupted]);
         if (attemptId !== attemptIdRef.current || controller.signal.aborted) {
           stream.getTracks().forEach((track) => track.stop());
           return;
         }
         streamRef.current = stream;
         setState((current) => ({ ...current, phase: 'connecting' }));
-        armTimeout('connection', 15_000);
+        armTimeout('speech', 20_000);
+        await Promise.race([audioReady, interrupted]);
 
-        const { recognizeWithAzure } =
-          await import('@/lib/azure-recognition-client');
-        const raw = await recognizeWithAzure({
+        const { recognizeOnDevice } =
+          await import('@/lib/local-recognition-client');
+        const { raw, practice } = await recognizeOnDevice({
           stream,
+          context,
           target,
           signal: controller.signal,
           onListening: () => {
             if (
-              !listeningStarted &&
               attemptId === attemptIdRef.current &&
               !controller.signal.aborted
             ) {
-              listeningStarted = true;
-              armTimeout('speech', 20_000);
               setState((current) => ({ ...current, phase: 'listening' }));
+            }
+          },
+          onScoring: () => {
+            if (
+              attemptId === attemptIdRef.current &&
+              !controller.signal.aborted
+            ) {
+              armTimeout('scoring', 90_000);
+              setState((current) => ({ ...current, phase: 'scoring' }));
             }
           },
         });
         if (attemptId !== attemptIdRef.current) return;
-        setState((current) => ({ ...current, phase: 'scoring' }));
+        controller.signal.throwIfAborted();
         const result = assessSpeechResult(target, raw);
         const scoredAttempt = registerScoredSpeechAttempt(
           scoredAttemptCountRef.current[language],
@@ -257,13 +285,15 @@ export function useSpeechAssessment({
           return {
             ...current,
             phase: 'complete',
-            result: result.level === 'unscored' ? result : best.result,
+            result:
+              exercise || result.level === 'unscored' ? result : best.result,
             results: { ...current.results, [language]: best.result },
             bestAttemptByLanguage: {
               ...current.bestAttemptByLanguage,
               [language]: best.attemptNumber,
             },
             retainedBest: best.retainedPrevious && result.level !== 'unscored',
+            practice,
             error: null,
           };
         });
@@ -278,8 +308,8 @@ export function useSpeechAssessment({
             error:
               timedOut === 'permission'
                 ? 'Microphone permission took too long. Check this site’s microphone setting, then try again; nothing was scored.'
-                : timedOut === 'connection'
-                  ? 'Azure took too long to connect. Try again or use Record & compare; nothing was scored.'
+                : timedOut === 'scoring'
+                  ? 'The on-device voice check took too long. Connect to Wi-Fi for the first check and try again.'
                   : 'No complete phrase arrived in time. Move closer to the microphone and try once more; nothing was scored.',
           }));
           return;
@@ -290,9 +320,12 @@ export function useSpeechAssessment({
           phase: 'error',
           result: null,
           retainedBest: false,
-          error: microphoneError(error) ?? recognitionError(error),
+          error:
+            microphoneError(error) ??
+            'The on-device voice check could not read this recording. Try again or use Record & compare.',
         }));
       } finally {
+        void audioContext?.close().catch(() => {});
         if (attemptId === attemptIdRef.current) {
           if (timeoutRef.current) clearTimeout(timeoutRef.current);
           timeoutRef.current = null;

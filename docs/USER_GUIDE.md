@@ -81,33 +81,40 @@ The six small bars on each **Learn** card show lesson-level completion. Salita u
 
 Underlined Tagalog words are audio controls. Tap one to hear just that word. Use **Hear model**, **Slow**, or **Hear slowly** for a complete line. Quick Match includes a speaker on every vocabulary card.
 
-Salita requests the configured Azure Filipino neural voice directly from the tap, which is important for iPhone playback rules. If Azure is unavailable, it tries a Filipino system voice when the device has one. It never substitutes an English voice for Filipino.
+Salita plays bundled Tagalog audio directly from your tap. If a clip cannot play, the app can use an installed Filipino system voice.
 
 If you hear nothing:
 
 1. Check the device and browser-tab volume.
 2. Tap the same audio control once more; iOS may pause a newly loaded audio request.
-3. Check the **Azure speech** card on **Today**.
-4. Use **Transcript** or **Hint** so the lesson remains usable.
+3. Use **Transcript** or **Hint** so the lesson remains usable.
+
+## Adjust practice feedback
+
+Short cues mark correct answers, retries, completed sessions, and the first session that counts toward today's streak. On compatible phones, the same moments have a light vibration. Go to **Progress → Practice feedback** to change these settings for this device. You can still play Tagalog examples and replay your recordings with sound effects turned off.
 
 ## Use Filipino and English microphone coaching
 
-Speaking and Sound Lab exercises can run an Azure voice check. The app asks the browser for a microphone stream, requests a short-lived Speech token, and sends live audio directly to Azure. It does not store voice-check audio or transcripts in Salita progress.
+Speaking and Sound Lab exercises can check what your device hears. The first check downloads the Moonshine Tiny speech recognition model and its runtime, about 55 MB in total. Use Wi-Fi for the first check and wait for the result. Audio and transcripts stay in the tab.
 
 ### Filipino
 
 1. Play the model.
 2. Select **Check Tagalog** or **Check my Tagalog**.
 3. Begin after the panel says **Listening…** and say the complete line.
-4. Review what Azure heard, word match, supported pronunciation metrics, and the one word that most needs another try.
+4. Review the transcript and word match. When the complete line is heard, **Pronunciation feedback** compares the pace and sound of your recording with the lesson model. If a section stands out, play that section of both recordings. Otherwise, play the complete line side by side.
 
-An exact transcript plus strong acoustic evidence can be **verified**. Recognizable words with weaker acoustic evidence are **understood** and receive supported-practice credit. A meaning-changing contrast such as `tayo/kami`, `kaliwa/kanan`, or `hindi/wala` cannot receive verified credit simply because the rest was close.
+A transcript that matches the target can verify the words. Partial matches can receive supported-practice credit. A meaning-changing contrast such as `tayo/kami`, `kaliwa/kanan`, or `hindi/wala` cannot receive verified credit simply because the rest was close.
 
-The scores are coaching signals, not proof of a native accent. Stress, glottal stops, vowel clarity, and the tapped `r` should also be compared with the Filipino model and written sound guide.
+Use the written sound guide with the recordings for vowel clarity, syllable stress, glottal stops, and the tapped `r`. The comparison uses one reference voice and offers a place to practice. It cannot confirm individual speech sounds or stress placement. The comparison does not determine your lesson credit.
+
+### Check stress on a single word
+
+Open **Review → Syllable practice** and choose a word. The highlighted syllable is the target. Play the recorded model, tap **Check my stress**, and say the word once at your usual pace. Salita compares relative vowel timing. When another vowel clearly stands out, the drill names both the syllable it heard and the target for your next try. For **saan**, it also checks for an audible break between the two _a_ vowels. The drill may suggest another try when the timing is ambiguous. You can replay your last attempt from the card.
 
 ### English
 
-**Check English** is optional pronunciation practice for the English meaning. Azure may return Overall, Accuracy, Fluency, and Complete values. English practice never substitutes for the required Tagalog turn.
+**Check English** shows a transcript for optional practice. It does not score English pronunciation.
 
 ### Record and compare privately
 
@@ -180,9 +187,7 @@ The sync indicator can report:
 
 Salita stores only learning progress needed for the course: XP, sessions, practice dates/minutes, completed unit and lesson IDs, review records, mistake states, and recent history. It does not place email addresses in the learning tables or exports; the displayed email comes from the current hosted request.
 
-Azure handles synthesized curriculum text and live microphone audio. The long-lived Azure key stays server-side; the browser receives only a short-lived authorization token. Salita does not intentionally retain speech audio or recognition transcripts.
-
-The project is designed to remain on Azure's Free F0 tier unless the owner explicitly approves a change. A budget alert is useful but is not a hard spending cap. When the quota is exhausted, use text and record-only fallbacks rather than changing to a paid tier automatically.
+The microphone model is processed on the device. The hosted app serves the lesson clips and the inference runtime, and the browser downloads model files from the Moonshine model CDN. Voice-check audio and transcripts are discarded when the activity ends.
 
 ## Troubleshooting
 
@@ -192,11 +197,11 @@ Sign in to the intended ChatGPT account in a normal browser window. If the host 
 
 ### The microphone stays on permission or connection
 
-Open the browser's site controls, set Microphone to Allow, reload, and try one current prompt. A permission wait stops after 15 seconds, Azure connection after 15 seconds, and an incomplete spoken phrase after 20 seconds. Nothing is scored on a timeout.
+Open the browser's site controls, set Microphone to Allow, reload, and try one current prompt. Allow time for the first model download. If the browser cannot finish, reload on Wi-Fi or use **Record only** to compare what you said.
 
-### Azure hears the wrong Filipino word
+### Salita hears the wrong Filipino word
 
-Move closer, reduce background sound, wait for **Listening…**, and say one complete line. Replay the model slowly. Salita asks Azure for detailed Filipino alternatives and protects meaning-bearing contrasts; try again rather than accepting a visibly wrong transcript.
+Move closer, reduce background sound, wait for **Listening…**, and say one complete line. Replay the model slowly. If the transcript is incorrect, try the same line again.
 
 ### Progress seems missing
 
